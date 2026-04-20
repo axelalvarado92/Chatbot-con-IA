@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyd
+
+# Lambda deps (MUY IMPORTANTE)
+Lambdas/knowledge_ia/requests/
+Lambdas/knowledge_ia/urllib3/
+Lambdas/knowledge_ia/certifi/
+Lambdas/knowledge_ia/idna/
+Lambdas/knowledge_ia/charset_normalizer/
+Lambdas/knowledge_ia/*.dist-info/
+Lambdas/knowledge_ia/bin/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Build
+*.zip
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+terraform.tfvars

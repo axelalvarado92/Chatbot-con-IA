@@ -24,3 +24,9 @@ variable "open_api_key" {
     type = string
   
 }
+
+variable "bitrix_webhook_url" {
+    description = "URL del webhook de Bitrix24"
+    type = string
+  
+}

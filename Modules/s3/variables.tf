@@ -9,3 +9,13 @@ variable "bucket_name" {
     type = string
   
 }
+
+variable "knowledge_file_name" {
+    description = "El nombre del archivo de conocimiento en el bucket s3"
+    type = string
+}
+
+variable "knowledge_file_path" {
+    description = "La ruta local del archivo de conocimiento para subir a s3"
+    type = string
+}

@@ -1,8 +1,21 @@
 resource "aws_s3_bucket" "bucket_knowledge" {
     bucket = var.bucket_name
 
+    force_destroy = true
+
     tags = var.tags
   
+}
+
+# RECURSO PARA SUBIR EL ARCHIVO
+resource "aws_s3_object" "knowledge_file" {
+  bucket       = aws_s3_bucket.bucket_knowledge.id
+  key          = var.knowledge_file_name
+  source       = var.knowledge_file_path
+  content_type = "application/json"
+  
+  # Crucial para que Terraform detecte cambios en el contenido del JSON
+  etag = filemd5(var.knowledge_file_path)
 }
 
 resource "aws_s3_bucket_public_access_block" "s3_knowledge_block" {

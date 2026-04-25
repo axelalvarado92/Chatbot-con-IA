@@ -54,3 +54,14 @@ variable "timeout" {
     type = number
   
 }
+
+variable "dynamodb_table_arn" {
+    description = "The ARN of the DynamoDB table for Lambda access"
+    type        = string
+}
+
+variable "layers" {
+    description = "A list of Lambda layers to attach to the function"
+    type        = list(string)
+    default     = []
+}

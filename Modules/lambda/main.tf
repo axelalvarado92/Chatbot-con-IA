@@ -10,6 +10,8 @@ resource "aws_lambda_function" "lambda_ia" {
   filename         = var.filename
   source_code_hash = var.source_code_hash
 
+  layers = var.layers
+
   environment {
     variables = var.environment_variables
   }
@@ -33,19 +35,25 @@ resource "aws_iam_role" "lambda_ia_role" {
 }
 
 data "aws_iam_policy_document" "lambda_policy_doc" {
-    statement {
-        sid = "s3Access"
-        effect = "Allow"
-        actions = [
-            "s3:GetObject"
-            ]
-        
-        resources = [ 
-            "${var.bucket_arn}/*"
-            ]
-        
-    }
-  
+
+  statement {
+    sid    = "s3Access"
+    effect = "Allow"
+    actions = ["s3:GetObject"]
+    resources = ["${var.bucket_arn}/*"]
+  }
+
+  statement {
+    sid    = "DynamoDBAccess"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query"
+    ]
+    resources = [var.dynamodb_table_arn] 
+  }
 }
 
 resource "aws_iam_policy" "lambda_policy" {

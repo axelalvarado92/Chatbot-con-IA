@@ -1,0 +1,7 @@
+Chatbot con IA integrado en AWS para automatización de consultas y procesamiento de información
+
+Este proyecto implementa un chatbot inteligente basado en IA, desplegado en AWS, con arquitectura serverless y orientado a la automatización de consultas, procesamiento de datos y respuestas contextuales.
+
+Incluye integración de servicios como AWS Lambda, API Gateway, SQS y almacenamiento en la nube, permitiendo una arquitectura escalable, desacoplada y preparada para producción.
+
+El sistema está diseñado para ser modular, extensible y fácil de adaptar a distintos casos de uso, como asistentes virtuales, automatización de procesos o sistemas de soporte inteligente.

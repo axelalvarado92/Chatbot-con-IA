@@ -7,6 +7,17 @@ from openai import OpenAI
 from decimal import Decimal
 
 # --- UTILIDADES ---
+def detectar_tipo_usuario(texto):
+    t = texto.lower()
+
+    if any(p in t for p in ["proveedor", "hotel", "agencia", "partner", "colaboración"]):
+        return "proveedor"
+
+    if any(p in t for p in ["ya viaje", "ya viajé", "cliente", "viaje con ustedes", "compré", "compre"]):
+        return "cliente"
+
+    return "lead"
+
 def formatear_historial(history):
     if not history: return "No hay historial previo."
     texto = "--- CONVERSACIÓN CON IA MARÍA ---\n"
@@ -41,10 +52,24 @@ def lambda_handler(event, context):
         KNOWLEDGE_FILE = os.environ.get("KNOWLEDGE_FILE")
         BITRIX_WEBHOOK = os.environ.get("BITRIX_WEBHOOK_URL")
 
-        body = json.loads(event.get("body", "{}"))
-        user_id = body.get("user_id")
-        user_question = body.get("question")
+        raw_body = event.get("body", "")
 
+        try:
+            body = json.loads(raw_body)
+        
+            # 🔹 Caso WhatCRM (WhatsApp)
+            if "phone" in body and "message" in body:
+                user_id = body.get("phone")
+                user_question = body.get("message")
+        
+            # 🔹 Caso tu API actual (testing)
+            else:
+                user_id = body.get("user_id")
+                user_question = body.get("question")
+
+        except:
+            user_id = None
+            user_question = None
         if not user_id or not user_question:
             return {"statusCode": 400, "body": json.dumps({"error": "Faltan datos"})}
 
@@ -62,8 +87,12 @@ def lambda_handler(event, context):
             "email": None,
             "country": "No definido",
             "lead_sent": False,
-            "lead_id": None   # ✅ NUEVO
+            "lead_id": None,  
+            "user_type": None  # lead | cliente | proveedor
         })
+
+        if not memory.get("user_type"):
+            memory["user_type"] = detectar_tipo_usuario(user_question)
 
         # Detectar país
         pais_det = detectar_pais(user_question)
@@ -74,6 +103,23 @@ def lambda_handler(event, context):
 
         s3_resp = s3.get_object(Bucket=BUCKET_NAME, Key=KNOWLEDGE_FILE)
         agency_knowledge = s3_resp["Body"].read().decode("utf-8")
+
+        # 🚫 FILTRO DE TIPO DE USUARIO
+        if memory.get("user_type") == "proveedor":
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "answer": "¡Hola! Para propuestas comerciales o colaboraciones, podés escribirnos por nuestros canales oficiales y un responsable se pondrá en contacto."
+                })
+            }
+
+        if memory.get("user_type") == "cliente":
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo lo antes posible para ayudarte en lo que necesites!"
+                })
+            }        
 
         # 2. OpenAI
         system_prompt = f"""Eres María, asesora de MisVacacionesYa.
@@ -222,6 +268,15 @@ RESPONDE SIEMPRE EN JSON:
         memory["history"] = history[-5:]
 
         table.put_item(Item=convert_decimals(memory))
+
+        # 🔹 Si viene de WhatCRM, responder en su formato
+        if "phone" in body and "message" in body:
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "reply": ai_response.get("answer")
+                })
+            }        
 
         return {
             "statusCode": 200,

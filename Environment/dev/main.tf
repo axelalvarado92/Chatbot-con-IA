@@ -29,13 +29,13 @@ module "chat_ia" {
 
     environment_variables = {
         BUCKET_NAME = module.s3.bucket_name
-        KNOWLEDGE_FILE = "knowledge.json"
         OPENAI_API_KEY = var.open_api_key
         TABLE_NAME = module.dynamodb.chat_memory_table_name
         BITRIX_WEBHOOK_URL = var.bitrix_webhook_url
+        KNOWLEDGE_FILE = "knowledge.json"
     }
 }
-
+    
 data "archive_file" "openai_layer_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../../build/layer_openai"

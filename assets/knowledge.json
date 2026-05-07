@@ -20,7 +20,7 @@
   "paquetes_referenciales": [
     {
       "categoria": "Circuitos Clásicos (España, Francia, Italia)",
-      "rango_precio": "USD 3900 - USD 4500",
+      "rango_precio": "USD 3500 - USD 4500",
       "duracion_promedio": "17 a 19 días",
       "puntos_clave": "Ideal para primer viaje. Madrid, París, Roma."
     },
@@ -32,7 +32,27 @@
     }
   ],
 
-  "instruccion_paquetes": "Usa estos datos solo como referencia si el cliente pregunta precios. No intentes vender uno específico. Di siempre: 'Tenemos opciones desde USD 3900, pero un asesor te dirá cuál se ajusta mejor a tu presupuesto'.",
+  "guia_inteligente": {
+  "por_presupuesto": {
+    "menos_4000": "Viajes más cortos o destinos más económicos dentro de Europa",
+    "4000_6000": "Circuitos clásicos por España, Francia o Italia",
+    "6000_8000": "Viajes más completos con más ciudades o mayor comodidad",
+    "mas_8000": "Grandes recorridos, múltiples países o experiencias premium"
+  },
+  "por_tipo_viaje": {
+    "cultural": "Ciudades históricas, museos, recorridos guiados",
+    "relax": "Menos ciudades, más tiempo libre, ritmo tranquilo",
+    "mixto": "Combinación de visitas guiadas y tiempo libre"
+  },
+  "por_duracion": {
+    "menos_10": "Viaje corto, recomendable 1 o 2 ciudades",
+    "10_15": "Recorrido moderado por varias ciudades",
+    "15_20": "Circuito completo por varios países",
+    "mas_20": "Viaje profundo con múltiples destinos"
+  }
+},
+
+  "instruccion_paquetes": "Usa estos datos solo como referencia si el cliente pregunta precios. No intentes vender uno específico. Di siempre: 'Tenemos opciones desde USD 3500, pero un asesor te dirá cuál se ajusta mejor a tu presupuesto'.",
 
   "comportamiento_ventas": {
     "estrategia": "Guiar al cliente de forma fluida y natural priorizando la obtención de los 4 datos clave (destino, fecha, personas y presupuesto). Solo hacer recomendaciones generales si ayudan a la conversación",

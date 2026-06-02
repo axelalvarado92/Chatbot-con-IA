@@ -56,20 +56,13 @@ def lambda_handler(event, context):
 
         try:
             body = json.loads(raw_body)
-        
-            # 🔹 Caso WhatCRM (WhatsApp)
-            if "phone" in body and "message" in body:
-                user_id = body.get("phone")
-                user_question = body.get("message")
-        
-            # 🔹 Caso tu API actual (testing)
-            else:
-                user_id = body.get("user_id")
-                user_question = body.get("question")
-
+            # CAMBIO 1: eliminada la detección de WhatCRM, un solo formato
+            user_id = body.get("user_id")
+            user_question = body.get("question")
         except:
             user_id = None
             user_question = None
+
         if not user_id or not user_question:
             return {"statusCode": 400, "body": json.dumps({"error": "Faltan datos"})}
 
@@ -87,14 +80,15 @@ def lambda_handler(event, context):
             "email": None,
             "country": "No definido",
             "lead_sent": False,
-            "lead_id": None,  
-            "user_type": None  # lead | cliente | proveedor
+            "lead_id": None,
+            "user_type": None,
+            # CAMBIO 2: nuevo campo para el teléfono de contacto
+            "phone_contact": None
         })
 
         if not memory.get("user_type"):
             memory["user_type"] = detectar_tipo_usuario(user_question)
 
-        # Detectar país
         pais_det = detectar_pais(user_question)
         if pais_det != "No definido":
             memory["country"] = pais_det
@@ -117,9 +111,9 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo lo antes posible para ayudarte en lo que necesites!"
+                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo lo antes posible para ayudarte en lo que necesites."
                 })
-            }        
+            }
 
         # 2. OpenAI
         system_prompt = f"""Eres María, asesora de MisVacacionesYa.
@@ -131,40 +125,43 @@ TU MISIÓN:
 3. Obtener los 4 datos clave: destino, personas, fecha, presupuesto.
 
 OBJETIVO DE CONVERSACIÓN:
-
 El objetivo no es solo obtener datos, sino ayudar al cliente a visualizar su viaje ideal para que llegue más decidido al asesor.
 
 GUÍA DE RECOMENDACIÓN:
-
 - Si el cliente menciona presupuesto pero no destino:
   Sugerir 2 o 3 opciones de destinos posibles acordes a ese presupuesto.
-
 - Si el cliente duda entre destinos:
   Ayudarlo a comparar de forma simple (ej: cultural vs paisajes vs variedad).
-
 - Si el cliente ya tiene destino:
-  Guiarlo con preguntas como:
-  - tipo de viaje (cultural, relax, mixto)
-  - duración aproximada
-  - si prefiere recorrer varias ciudades o quedarse en una
-
+  Guiarlo con preguntas como tipo de viaje, duración aproximada, si prefiere recorrer varias ciudades o quedarse en una.
 - Siempre avanzar de a poco, como si estuvieras armando el viaje junto al cliente.
 - No abrumar con demasiada información.
 - Mantener máximo 2 preguntas por respuesta.
 
 REGLAS DE ORO:
 - No repetir preguntas ya realizadas anteriormente.
-- Si el cliente ya respondió algo (ej: tipo de viaje), no volver a preguntarlo.
-- Priorizar solo preguntas que aporten valor directo al asesor (fecha, presupuesto, personas).
-- Evitar preguntas innecesarias como preferencias secundarias si no son clave para avanzar.
-- Si ya hay suficiente contexto, avanzar hacia el cierre en lugar de seguir preguntando.
-- Si Estado HOT: Antes de derivar, hacer un breve resumen del viaje armado (destino, personas, fecha, presupuesto y preferencias si existen). Luego preguntar si prefiere WhatsApp o llamada.
+- Si el cliente ya respondió algo, no volver a preguntarlo.
+- Priorizar solo preguntas que aporten valor directo al asesor.
+- Evitar preguntas innecesarias si no son clave para avanzar.
+- Si ya hay suficiente contexto, avanzar hacia el cierre.
+
+CAMBIO 3: LÓGICA DE CIERRE CON TELÉFONO:
+- Cuando tengas los 4 datos completos (destino, personas, fecha, presupuesto), NO derives al asesor todavía.
+- Primero hacé un breve resumen del viaje armado.
+- Luego pedí el número de contacto de forma natural, por ejemplo:
+  "¡Perfecto, ya tengo todo para armar tu viaje! ¿Me dejás un número de contacto para que el asesor se comunique con vos?"
+- Solo cuando el cliente proporcione su número de contacto, despedite indicando que el asesor se va a comunicar a la brevedad.
+- El número de contacto va en el campo phone_contact del extracted_data.
 
 RESPONDE SIEMPRE EN JSON:
 {{
   "answer": "tu respuesta",
   "extracted_data": {{
-    "destination": "valor o null", "people": "valor o null", "date": "valor o null", "budget": "valor o null"
+    "destination": "valor o null",
+    "people": "valor o null",
+    "date": "valor o null",
+    "budget": "valor o null",
+    "phone_contact": "valor o null"
   }}
 }}
 """
@@ -182,7 +179,8 @@ RESPONDE SIEMPRE EN JSON:
         extracted = ai_response.get("extracted_data", {})
 
         # 3. Sincronizar Memoria
-        for key in ["destination", "people", "date", "budget"]:
+        # CAMBIO 4: phone_contact incluido en la sincronización
+        for key in ["destination", "people", "date", "budget", "phone_contact"]:
             val = extracted.get(key)
             if val and str(val).lower() not in ["null", "none"]:
                 memory[key] = val
@@ -190,9 +188,10 @@ RESPONDE SIEMPRE EN JSON:
         # 4. Evaluación de Lead
         filled = sum([1 for k in ["destination", "people", "date", "budget"] if memory.get(k)])
         old_status = memory.get("lead_status", "cold")
-        if filled == 4:
+
+        # CAMBIO 5: HOT requiere los 4 datos + teléfono de contacto
+        if filled == 4 and memory.get("phone_contact"):
             new_status = "hot"
-        
         elif (
             memory.get("destination") or
             memory.get("budget") or
@@ -200,11 +199,10 @@ RESPONDE SIEMPRE EN JSON:
             memory.get("date")
         ):
             new_status = "warm"
-        
         else:
-            new_status = "cold"        
+            new_status = "cold"
 
-        # 5. CREAR LEAD (solo una vez)
+        # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
         if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
 
             mapa_destinos = {"españa": "1367", "roma": "1347", "italia": "1347", "argentina": "1207"}
@@ -225,6 +223,8 @@ RESPONDE SIEMPRE EN JSON:
                 "fields": {
                     "TITLE": f"Lead IA: {memory.get('destination')} - {user_id}",
                     "OPPORTUNITY": memory.get("budget"),
+                    # CAMBIO 6: teléfono de contacto incluido en el lead de Bitrix
+                    "PHONE": [{"VALUE": memory.get("phone_contact"), "VALUE_TYPE": "WORK"}],
                     "UF_CRM_1729943385206": id_destino,
                     "UF_CRM_1729072409973": id_origen,
                     "DESCRIPTION": charla_texto,
@@ -238,7 +238,7 @@ RESPONDE SIEMPRE EN JSON:
 
                 if new_id:
                     memory["lead_sent"] = True
-                    memory["lead_id"] = new_id  # ✅ GUARDAMOS EL ID
+                    memory["lead_id"] = new_id
 
                     base_url = BITRIX_WEBHOOK.split('/crm.lead.add.json')[0]
                     requests.post(
@@ -255,7 +255,7 @@ RESPONDE SIEMPRE EN JSON:
             except Exception as b_err:
                 print(f"Error en comunicación con Bitrix: {b_err}")
 
-        # 6. UPDATE SI YA EXISTE
+        # 6. UPDATE SI EL LEAD YA EXISTE
         elif new_status == "hot" and memory.get("lead_id") and BITRIX_WEBHOOK:
 
             lead_id = memory.get("lead_id")
@@ -266,7 +266,6 @@ RESPONDE SIEMPRE EN JSON:
             charla_texto = formatear_historial(temp_history)
 
             try:
-                # actualizar datos
                 requests.post(
                     f"{BITRIX_WEBHOOK}crm.lead.update.json",
                     json={
@@ -278,7 +277,6 @@ RESPONDE SIEMPRE EN JSON:
                     timeout=10
                 )
 
-                # agregar nuevo mensaje al timeline
                 base_url = BITRIX_WEBHOOK.split('/crm.lead.add.json')[0]
                 requests.post(
                     f"{base_url}/crm.timeline.comment.add.json",
@@ -306,16 +304,7 @@ RESPONDE SIEMPRE EN JSON:
 
         table.put_item(Item=convert_decimals(memory))
 
-        # 🔹 Si viene de WhatCRM, responder en su formato
-        if "phone" in body and "message" in body:
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "reply": ai_response.get("answer"),
-                    "lead_status": new_status
-                })
-            }        
-
+        # CAMBIO 7: return unificado, eliminado el bloque condicional de WhatCRM
         return {
             "statusCode": 200,
             "body": json.dumps({

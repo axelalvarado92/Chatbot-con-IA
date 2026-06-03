@@ -10,8 +10,8 @@ module "s3" {
     prompt_file_path = "${path.root}/../../assets/${var.client_name}/prompt.json"
 
     tags = {
-        Environment = "dev"
-        Project     = "chatbot-ia"
+        Environment = var.client_name
+        Project     = var.project_name
     }
 }
 

@@ -18,6 +18,15 @@ resource "aws_s3_object" "knowledge_file" {
   etag = filemd5(var.knowledge_file_path)
 }
 
+resource "aws_s3_object" "prompt" {
+  bucket = aws_s3_bucket.bucket_knowledge.id
+  key    = var.prompt_file_name
+  source = var.prompt_file_path
+  content_type = "application/json"
+
+  etag = filemd5(var.prompt_file_path)
+}
+
 resource "aws_s3_bucket_public_access_block" "s3_knowledge_block" {
   bucket = aws_s3_bucket.bucket_knowledge.id
 

@@ -19,3 +19,14 @@ variable "knowledge_file_path" {
     description = "La ruta local del archivo de conocimiento para subir a s3"
     type = string
 }
+
+variable "prompt_file_name" {
+    description = "El nombre del archivo de prompt en el bucket s3"
+    type = string
+}
+
+variable "prompt_file_path" {
+    description = "La ruta local del archivo de prompt para subir a s3"
+    type = string
+}
+

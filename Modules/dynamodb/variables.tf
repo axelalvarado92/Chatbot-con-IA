@@ -11,3 +11,8 @@ variable "environment" {
     default = "dev"
   
 }
+
+variable table_name {
+    description = "Nombre de la tabla DynamoDB para almacenar la memoria del chatbot"
+    type        = string
+}

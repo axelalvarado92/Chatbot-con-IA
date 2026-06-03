@@ -15,7 +15,7 @@ resource "aws_dynamodb_table" "chat_memory" {
 
 
   tags = {
-    Name        = "chat-memory"
+    Table_Name  = var.table_name
     Environment = var.environment
     Project     = var.project_name
   }

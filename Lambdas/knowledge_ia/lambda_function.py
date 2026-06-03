@@ -18,13 +18,20 @@ def detectar_tipo_usuario(texto):
 
     return "lead"
 
-def formatear_historial(history):
-    if not history: return "No hay historial previo."
-    texto = "--- CONVERSACIÓN CON IA MARÍA ---\n"
+def formatear_historial(history, assistant_name="Asistente"):
+    if not history:
+        return "No hay historial previo."
+
+    texto = f"--- CONVERSACIÓN CON IA {assistant_name.upper()} ---\n"
+
     for msg in history:
         u = msg.get('user', 'Usuario')
-        a = msg.get('assistant', 'María')
-        texto += f"Cliente: {u}\nAsistente: {a}\n----------------\n"
+        a = msg.get('assistant', assistant_name)
+
+        texto += f"Cliente: {u}\n"
+        texto += f"Asistente: {a}\n"
+        texto += "----------------\n"
+
     return texto
 
 def convert_decimals(obj):
@@ -35,28 +42,46 @@ def convert_decimals(obj):
 
 def detectar_pais(texto):
     t = texto.lower()
-    if any(p in t for p in ["argentina", "argentino", "arg"]): return "Argentina"
-    if any(p in t for p in ["españa", "español", "espania", "espańa"]): return "España"
+
+    if any(p in t for p in ["argentina", "argentino", "arg"]):
+        return "Argentina"
+
+    if any(p in t for p in ["españa", "español", "espania", "espańa"]):
+        return "España"
+
     return "No definido"
+
+def extraer_telefono(texto):
+
+    patron = r'(\+?\d[\d\s\-\(\)]{7,20}\d)'
+
+    match = re.search(patron, texto)
+
+    if match:
+        return match.group(1)
+
+    return None
 
 # --- CLIENTES ---
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-def lambda_handler(event, context):
+def lambda_handler(event, context):            
     try:
         # 0. Configuración Inicial
-        TABLE_NAME = os.environ.get("TABLE_NAME")
-        BUCKET_NAME = os.environ.get("BUCKET_NAME")
+        TABLE_NAME     = os.environ.get("TABLE_NAME")
+        BUCKET_NAME    = os.environ.get("BUCKET_NAME")
         KNOWLEDGE_FILE = os.environ.get("KNOWLEDGE_FILE")
         BITRIX_WEBHOOK = os.environ.get("BITRIX_WEBHOOK_URL")
+        BUSINESS_TYPE  = os.environ.get("BUSINESS_TYPE", "travel")
+        PROMPT_FILE    = os.environ.get("PROMPT_FILE", "prompt.json")
 
         raw_body = event.get("body", "")
 
         try:
             body = json.loads(raw_body)
-            # CAMBIO 1: eliminada la detección de WhatCRM, un solo formato
+            # 1: eliminada la detección de WhatCRM, un solo formato
             user_id = body.get("user_id")
             user_question = body.get("question")
         except:
@@ -71,7 +96,7 @@ def lambda_handler(event, context):
         response = table.get_item(Key={"user_id": user_id})
         memory = response.get("Item", {
             "user_id": user_id,
-            "destination": None,
+           "destination": None,
             "people": None,
             "date": None,
             "budget": None,
@@ -82,12 +107,14 @@ def lambda_handler(event, context):
             "lead_sent": False,
             "lead_id": None,
             "user_type": None,
-            # CAMBIO 2: nuevo campo para el teléfono de contacto
             "phone_contact": None
         })
+        nuevo_tipo = detectar_tipo_usuario(user_question)
 
-        if not memory.get("user_type"):
-            memory["user_type"] = detectar_tipo_usuario(user_question)
+        if nuevo_tipo != "lead":
+            memory["user_type"] = nuevo_tipo
+        elif not memory.get("user_type"):
+            memory["user_type"] = "lead"        
 
         pais_det = detectar_pais(user_question)
         if pais_det != "No definido":
@@ -97,6 +124,27 @@ def lambda_handler(event, context):
 
         s3_resp = s3.get_object(Bucket=BUCKET_NAME, Key=KNOWLEDGE_FILE)
         agency_knowledge = s3_resp["Body"].read().decode("utf-8")
+
+        prompt_resp = s3.get_object(
+            Bucket=BUCKET_NAME,
+            Key=PROMPT_FILE
+        )
+        
+        prompt_config = json.loads(
+            prompt_resp["Body"].read().decode("utf-8")
+        )
+
+        lead_fields = prompt_config.get(
+            "lead_fields",
+            ["destination", "people", "date", "budget"]
+        )
+
+        lead_fields = prompt_config.get(
+            "lead_fields",
+            ["destination", "people", "date", "budget"]
+        )        
+        
+        required_fields_count = len(lead_fields)
 
         # 🚫 FILTRO DE TIPO DE USUARIO
         if memory.get("user_type") == "proveedor":
@@ -116,42 +164,31 @@ def lambda_handler(event, context):
             }
 
         # 2. OpenAI
-        system_prompt = f"""Eres María, asesora de MisVacacionesYa.
+        system_prompt = f"""
 CONTEXTO AGENCIA: {agency_knowledge}
-MEMORIA CLIENTE: {json.dumps(safe_memory)}
+Eres {prompt_config['assistant_name']},
+asesora de viajes de {prompt_config['company_name']}.
+
+MEMORIA CLIENTE:
+{json.dumps(safe_memory)}
+
 TU MISIÓN:
-1. Responder dudas usando el CONTEXTO AGENCIA.
-2. Si preguntan algo NO presente, responde: "Ese detalle lo coordinarás directamente con el asesor".
-3. Obtener los 4 datos clave: destino, personas, fecha, presupuesto.
+{chr(10).join(prompt_config['mission'])}
 
-OBJETIVO DE CONVERSACIÓN:
-El objetivo no es solo obtener datos, sino ayudar al cliente a visualizar su viaje ideal para que llegue más decidido al asesor.
+REGLAS DE RECOMENDACIÓN:
+{chr(10).join(prompt_config['recommendation_rules'])}
 
-GUÍA DE RECOMENDACIÓN:
-- Si el cliente menciona presupuesto pero no destino:
-  Sugerir 2 o 3 opciones de destinos posibles acordes a ese presupuesto.
-- Si el cliente duda entre destinos:
-  Ayudarlo a comparar de forma simple (ej: cultural vs paisajes vs variedad).
-- Si el cliente ya tiene destino:
-  Guiarlo con preguntas como tipo de viaje, duración aproximada, si prefiere recorrer varias ciudades o quedarse en una.
-- Siempre avanzar de a poco, como si estuvieras armando el viaje junto al cliente.
-- No abrumar con demasiada información.
-- Mantener máximo 2 preguntas por respuesta.
+REGLaS DE EXTRACCIÓN DE DATOS:
+{chr(10).join(prompt_config['extraction_rules'])}
+
+EMOTIONAL RULES:
+{chr(10).join(prompt_config['emotional_rules'])}
 
 REGLAS DE ORO:
-- No repetir preguntas ya realizadas anteriormente.
-- Si el cliente ya respondió algo, no volver a preguntarlo.
-- Priorizar solo preguntas que aporten valor directo al asesor.
-- Evitar preguntas innecesarias si no son clave para avanzar.
-- Si ya hay suficiente contexto, avanzar hacia el cierre.
+{chr(10).join(prompt_config['golden_rules'])}
 
-CAMBIO 3: LÓGICA DE CIERRE CON TELÉFONO:
-- Cuando tengas los 4 datos completos (destino, personas, fecha, presupuesto), NO derives al asesor todavía.
-- Primero hacé un breve resumen del viaje armado.
-- Luego pedí el número de contacto de forma natural, por ejemplo:
-  "¡Perfecto, ya tengo todo para armar tu viaje! ¿Me dejás un número de contacto para que el asesor se comunique con vos?"
-- Solo cuando el cliente proporcione su número de contacto, despedite indicando que el asesor se va a comunicar a la brevedad.
-- El número de contacto va en el campo phone_contact del extracted_data.
+LÓGICA DE CIERRE:
+{chr(10).join(prompt_config['closing_logic'])}
 
 RESPONDE SIEMPRE EN JSON:
 {{
@@ -176,31 +213,57 @@ RESPONDE SIEMPRE EN JSON:
         )
 
         ai_response = json.loads(completion.choices[0].message.content)
+        
         extracted = ai_response.get("extracted_data", {})
+        
+        telefono_detectado = extraer_telefono(user_question)
+
+        if telefono_detectado:
+            extracted["phone_contact"] = telefono_detectado
 
         # 3. Sincronizar Memoria
-        # CAMBIO 4: phone_contact incluido en la sincronización
-        for key in ["destination", "people", "date", "budget", "phone_contact"]:
+        # phone_contact incluido en la sincronización
+        campos_memoria = lead_fields.copy()
+
+        if "phone_contact" not in campos_memoria:
+            campos_memoria.append("phone_contact")
+        
+        for key in campos_memoria:
             val = extracted.get(key)
+
             if val and str(val).lower() not in ["null", "none"]:
                 memory[key] = val
 
         # 4. Evaluación de Lead
-        filled = sum([1 for k in ["destination", "people", "date", "budget"] if memory.get(k)])
-        old_status = memory.get("lead_status", "cold")
+        filled = sum(
+            1
+            for k in lead_fields
+            if memory.get(k)
+        )
 
-        # CAMBIO 5: HOT requiere los 4 datos + teléfono de contacto
-        if filled == 4 and memory.get("phone_contact"):
-            new_status = "hot"
-        elif (
-            memory.get("destination") or
-            memory.get("budget") or
-            memory.get("people") or
-            memory.get("date")
-        ):
-            new_status = "warm"
+        # HOT requiere los 4 datos + teléfono de contacto
+        if BUSINESS_TYPE == "travel":
+
+            if filled == required_fields_count and memory.get("phone_contact"):
+                new_status = "hot"
+            elif (
+                memory.get("destination")
+                or memory.get("budget")
+                or memory.get("people")
+                or memory.get("date")
+            ):
+                new_status = "warm"
+            else:
+                new_status = "cold"
+        
         else:
-            new_status = "cold"
+        
+            if filled == 4:
+                new_status = "hot"
+            elif filled > 0:
+                new_status = "warm"
+            else:
+                new_status = "cold"
 
         # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
         if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
@@ -217,19 +280,28 @@ RESPONDE SIEMPRE EN JSON:
             temp_history = memory.get("history", []) + [
                 {"user": user_question, "assistant": ai_response.get("answer")}
             ]
-            charla_texto = formatear_historial(temp_history)
+            charla_texto = formatear_historial(
+                temp_history,
+                prompt_config["assistant_name"]
+            )
+
+            fields = {
+                "TITLE": f"{prompt_config['company_name']} - {user_id}",
+                "OPPORTUNITY": memory.get("budget"),
+                "UF_CRM_1729943385206": id_destino,
+                "UF_CRM_1729072409973": id_origen,
+                "DESCRIPTION": charla_texto,
+                "COMMENTS": charla_texto
+            }
+
+            if memory.get("phone_contact"):
+                fields["PHONE"] = [{
+                    "VALUE": memory.get("phone_contact"),
+                    "VALUE_TYPE": "WORK"
+                }]
 
             bitrix_payload = {
-                "fields": {
-                    "TITLE": f"Lead IA: {memory.get('destination')} - {user_id}",
-                    "OPPORTUNITY": memory.get("budget"),
-                    # CAMBIO 6: teléfono de contacto incluido en el lead de Bitrix
-                    "PHONE": [{"VALUE": memory.get("phone_contact"), "VALUE_TYPE": "WORK"}],
-                    "UF_CRM_1729943385206": id_destino,
-                    "UF_CRM_1729072409973": id_origen,
-                    "DESCRIPTION": charla_texto,
-                    "COMMENTS": charla_texto
-                }
+                "fields": fields
             }
 
             try:
@@ -263,15 +335,25 @@ RESPONDE SIEMPRE EN JSON:
             temp_history = memory.get("history", []) + [
                 {"user": user_question, "assistant": ai_response.get("answer")}
             ]
-            charla_texto = formatear_historial(temp_history)
+            charla_texto = formatear_historial(
+                temp_history,
+                prompt_config["assistant_name"]
+            )
+            
 
             try:
                 requests.post(
                     f"{BITRIX_WEBHOOK}crm.lead.update.json",
                     json={
                         "id": lead_id,
-                        "fields": {
-                            "OPPORTUNITY": memory.get("budget")
+                       "fields": {
+                            "OPPORTUNITY": memory.get("budget"),
+                            "PHONE": [
+                                {
+                                    "VALUE": memory.get("phone_contact"),
+                                    "VALUE_TYPE": "WORK"
+                                }
+                            ]
                         }
                     },
                     timeout=10
@@ -300,11 +382,11 @@ RESPONDE SIEMPRE EN JSON:
             "user": user_question,
             "assistant": ai_response.get("answer")
         })
-        memory["history"] = history[-5:]
+        memory["history"] = history[-20:]
 
         table.put_item(Item=convert_decimals(memory))
 
-        # CAMBIO 7: return unificado, eliminado el bloque condicional de WhatCRM
+        # 7: return unificado, eliminado el bloque condicional de WhatCRM
         return {
             "statusCode": 200,
             "body": json.dumps({

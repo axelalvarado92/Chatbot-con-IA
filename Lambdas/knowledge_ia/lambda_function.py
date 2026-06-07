@@ -5,6 +5,51 @@ import requests
 import re
 from openai import OpenAI
 from decimal import Decimal
+from datetime import datetime
+import uuid
+import re
+
+def guardar_auditoria(
+    bucket,
+    user_id,
+    user_question,
+    ai_answer,
+    memory,
+    lead_status
+):
+    try:
+
+        timestamp = datetime.utcnow()
+
+        audit_record = {
+            "timestamp": timestamp.isoformat(),
+            "user_id": user_id,
+            "user_message": user_question,
+            "assistant_answer": ai_answer,
+            "lead_status": lead_status,
+            "budget_status": memory.get("budget_status"),
+            "memory_snapshot": memory
+        }
+
+        key = (
+            f"{timestamp.year}/"
+            f"{timestamp.month:02d}/"
+            f"{timestamp.day:02d}/"
+            f"{uuid.uuid4()}.json"
+        )
+
+        s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(
+                convert_decimals(audit_record),
+                ensure_ascii=False
+            ),
+            ContentType="application/json"
+        )
+
+    except Exception as e:
+        print(f"Error guardando auditoría: {e}")
 
 # --- UTILIDADES ---
 def detectar_tipo_usuario(texto):
@@ -62,6 +107,65 @@ def extraer_telefono(texto):
 
     return None
 
+def calcular_estado_presupuesto(destination, people, budget):
+
+    if not destination or not people or not budget:
+        return None
+
+    try:
+
+        print(f"Destino recibido: {destination}")
+        print(f"Personas recibidas: {people}")
+        print(f"Budget recibido: {budget}")
+
+        destino = str(destination).lower().strip()
+
+        budget_clean = re.sub(
+            r"[^\d]",
+            "",
+            str(budget)
+        )
+
+        presupuesto_total = float(budget_clean)
+
+        viajeros = int(people)
+
+        MIN_BUDGETS = {
+            "china": 5000,
+            "japon": 6000,
+            "japón": 6000,
+            "egipto": 3500,
+            "turquia": 4000,
+            "turquía": 4000,
+            "grecia": 4000,
+            "españa": 4500,
+            "espana": 4500,
+            "italia": 4500
+        }
+
+        minimo_persona = MIN_BUDGETS.get(destino)
+
+        if not minimo_persona:
+            return None
+
+        minimo_total = minimo_persona * viajeros
+
+        print(f"Presupuesto limpio: {presupuesto_total}")
+        print(f"Minimo requerido: {minimo_total}")
+
+        if presupuesto_total < minimo_total:
+            return "low"
+
+        elif presupuesto_total < minimo_total * 1.3:
+            return "adjusted"
+
+        else:
+            return "good"
+
+    except:
+        print(f"ERROR PRESUPUESTO: {e}")
+        return None
+
 # --- CLIENTES ---
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
@@ -76,6 +180,7 @@ def lambda_handler(event, context):
         BITRIX_WEBHOOK = os.environ.get("BITRIX_WEBHOOK_URL")
         BUSINESS_TYPE  = os.environ.get("BUSINESS_TYPE", "travel")
         PROMPT_FILE    = os.environ.get("PROMPT_FILE", "prompt.json")
+        AUDIT_BUCKET   = os.environ.get("AUDIT_BUCKET")
 
         raw_body = event.get("body", "")
 
@@ -107,7 +212,9 @@ def lambda_handler(event, context):
             "lead_sent": False,
             "lead_id": None,
             "user_type": None,
-            "phone_contact": None
+            "phone_contact": None,
+            "budget_status": None,
+            "budget_known": False
         })
         nuevo_tipo = detectar_tipo_usuario(user_question)
 
@@ -172,6 +279,9 @@ asesora de viajes de {prompt_config['company_name']}.
 MEMORIA CLIENTE:
 {json.dumps(safe_memory)}
 
+ESTADO PRESUPUESTO:
+{memory.get("budget_status")}
+
 TU MISIÓN:
 {chr(10).join(prompt_config['mission'])}
 
@@ -180,9 +290,6 @@ REGLAS DE RECOMENDACIÓN:
 
 REGLaS DE EXTRACCIÓN DE DATOS:
 {chr(10).join(prompt_config['extraction_rules'])}
-
-EMOTIONAL RULES:
-{chr(10).join(prompt_config['emotional_rules'])}
 
 REGLAS DE ORO:
 {chr(10).join(prompt_config['golden_rules'])}
@@ -215,6 +322,8 @@ RESPONDE SIEMPRE EN JSON:
         ai_response = json.loads(completion.choices[0].message.content)
         
         extracted = ai_response.get("extracted_data", {})
+        print("USER:", user_question)
+        print("EXTRACTED:", extracted)
         
         telefono_detectado = extraer_telefono(user_question)
 
@@ -234,18 +343,114 @@ RESPONDE SIEMPRE EN JSON:
             if val and str(val).lower() not in ["null", "none"]:
                 memory[key] = val
 
+        texto_normalizado = user_question.lower().strip()
+
+        if (
+            memory.get("destination")
+            and memory.get("people")
+            and memory.get("date")
+            and not memory.get("budget")
+            and texto_normalizado in [
+                "no se",
+                "no sé",
+                "nose",
+                "ni idea",
+                "desconozco",
+                "no lo se",
+                "no lo sé"
+            ]
+        ):
+            
+            memory["budget_unknown"] = True        
+
+        
+        memory["budget_status"] = calcular_estado_presupuesto(
+            memory.get("destination"),
+            memory.get("people"),
+            memory.get("budget")
+        )
+
+        print("DESTINO:", memory.get("destination"))
+        print("PERSONAS:", memory.get("people"))
+        print("PRESUPUESTO:", memory.get("budget"))
+        print("BUDGET STATUS:", memory.get("budget_status"))
+        print("BUDGET UNKNOWN:", memory.get("budget_unknown"))
+
+        if (
+            memory.get("destination")
+            and memory.get("people")
+            and memory.get("date")
+            and memory.get("budget_unknown")
+            and not memory.get("phone_contact")
+        ):
+            ai_response["answer"] = (
+                "Entiendo! Si aún no cuentas con un presupuesto definido, "
+                "uno de nuestros asesores puede orientarte sobre costos y opciones disponibles. "
+                "Por favor indícanos un número de teléfono y nos pondremos en contacto contigo lo antes posible."
+            )
+        
+        if (
+            memory.get("budget_unknown")
+            and memory.get("phone_contact")
+        ):
+        
+            ai_response["answer"] = (
+                "Perfecto. Hemos recibido tu número de contacto. "
+                "Uno de nuestros asesores se comunicará contigo lo antes posible para ayudarte a evaluar opciones y presupuesto para tu viaje."
+            )
+
+        if (    
+            memory["budget_status"] == "low"
+            and memory.get("destination")
+            and memory.get("people")
+            and memory.get("date")
+            and memory.get("budget")
+        ):
+
+           ai_response["answer"] = (
+               "Gracias por compartir los datos de tu viaje. "
+               "Para el destino y la cantidad de viajeros indicados, el presupuesto podría resultar ajustado según las fechas y la disponibilidad. "
+               "Si lo deseas, déjanos un número de contacto y un asesor se comunicará contigo lo antes posible para ayudarte a encontrar mejores opciones."
+            )
+
         # 4. Evaluación de Lead
         filled = sum(
             1
             for k in lead_fields
             if memory.get(k)
         )
+        budget_status = memory.get("budget_status")
 
         # HOT requiere los 4 datos + teléfono de contacto
         if BUSINESS_TYPE == "travel":
 
-            if filled == required_fields_count and memory.get("phone_contact"):
+            budget_status = memory.get("budget_status")
+
+            if (
+                (
+                    filled == required_fields_count
+                    and memory.get("phone_contact")
+                )
+                or
+                (
+                    memory.get("destination")
+                    and memory.get("people")
+                    and memory.get("date")
+                    and memory.get("budget_unknown")
+                    and memory.get("phone_contact")
+                )
+            ):
                 new_status = "hot"
+            
+            elif (
+                memory.get("destination")
+                and memory.get("people")
+                and memory.get("date")
+                and memory.get("budget_unknown")
+                and memory.get("phone_contact")
+            ):
+                new_status = "hot"
+
             elif (
                 memory.get("destination")
                 or memory.get("budget")
@@ -253,6 +458,7 @@ RESPONDE SIEMPRE EN JSON:
                 or memory.get("date")
             ):
                 new_status = "warm"
+
             else:
                 new_status = "cold"
         
@@ -268,7 +474,22 @@ RESPONDE SIEMPRE EN JSON:
         # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
         if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
 
-            mapa_destinos = {"españa": "1367", "roma": "1347", "italia": "1347", "argentina": "1207"}
+            mapa_destinos = {"españa": "1367",
+                            "roma": "1347",
+                            "italia": "1347",
+                            "argentina": "1207",
+                            "china": "1765",
+                            "japon": "1081",
+                            "francia": "1817",
+                            "grecia": "1977",
+                            "egipto": "1507",
+                            "turquia": "1687",
+                            "corea del sur": "1083",
+                            "dubai": "1477",
+                            "marruecos": "1377",
+                            "india": "1085"
+                            }
+            
             mapa_origenes = {"argentina": "263", "españa": "261"}
 
             dest_mem = str(memory.get("destination", "")).lower().strip()
@@ -294,6 +515,9 @@ RESPONDE SIEMPRE EN JSON:
                 "COMMENTS": charla_texto
             }
 
+            if memory.get("budget_unknown"):
+                fields["COMMENTS"] += "\n\nPresupuesto: NO DEFINIDO POR EL CLIENTE"
+
             if memory.get("phone_contact"):
                 fields["PHONE"] = [{
                     "VALUE": memory.get("phone_contact"),
@@ -311,6 +535,7 @@ RESPONDE SIEMPRE EN JSON:
                 if new_id:
                     memory["lead_sent"] = True
                     memory["lead_id"] = new_id
+                    memory["budget_unknown"] = False
 
                     base_url = BITRIX_WEBHOOK.split('/crm.lead.add.json')[0]
                     requests.post(
@@ -385,6 +610,17 @@ RESPONDE SIEMPRE EN JSON:
         memory["history"] = history[-20:]
 
         table.put_item(Item=convert_decimals(memory))
+
+        if AUDIT_BUCKET:
+
+            guardar_auditoria(
+                AUDIT_BUCKET,
+                user_id,
+                user_question,
+                ai_response.get("answer"),
+                memory,
+                new_status
+            )
 
         # 7: return unificado, eliminado el bloque condicional de WhatCRM
         return {

@@ -1,3 +1,7 @@
+resource "aws_s3_bucket" "audit" {
+  bucket = "${var.project_name}-${var.client_name}-audit"
+}
+
 module "s3" {
     source      = "../../Modules/s3"
     bucket_name = "${var.client_name}-${var.environment}-assets-47148"
@@ -26,6 +30,8 @@ module "chat_ia" {
     dynamodb_table_arn = module.dynamodb.chat_memory_table_arn
 
     layers = [aws_lambda_layer_version.openai_layer.arn]
+
+    audit_bucket_arn = aws_s3_bucket.audit.arn
     
     memory_size = 256
     timeout = 30
@@ -38,6 +44,7 @@ module "chat_ia" {
         KNOWLEDGE_FILE     = "knowledge.json"
         PROMPT_FILE        = "prompt.json"
         BUSINESS_TYPE      = var.business_type
+        AUDIT_BUCKET       = aws_s3_bucket.audit.bucket
 
     }
 }

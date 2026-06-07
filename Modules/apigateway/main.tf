@@ -1,6 +1,23 @@
 resource "aws_apigatewayv2_api" "http_api" {
-  name                       = "${var.project_name}-${var.environment}-api"
-  protocol_type              = "HTTP"
+  name          = "${var.project_name}-${var.environment}-api"
+  protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_origins = [
+      "https://misvacacionesya.online"
+    ]
+
+    allow_methods = [
+      "POST",
+      "OPTIONS"
+    ]
+
+    allow_headers = [
+      "content-type"
+    ]
+
+    max_age = 300
+  }
 }
 
 resource "aws_apigatewayv2_integration" "lambda_integration" {

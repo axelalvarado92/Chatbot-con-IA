@@ -54,6 +54,18 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
     ]
     resources = [var.dynamodb_table_arn] 
   }
+  statement {
+  sid    = "AuditBucketWrite"
+  effect = "Allow"
+
+  actions = [
+    "s3:PutObject"
+  ]
+
+  resources = [
+     "${var.audit_bucket_arn}/*"
+  ]
+}
 }
 
 resource "aws_iam_policy" "lambda_policy" {

@@ -9,5 +9,6 @@ terraform {
 }
 
 provider "aws" {
-  region = var.region
+  region  = var.region
+  profile = "cuenta-tio"
 }

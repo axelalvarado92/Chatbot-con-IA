@@ -107,6 +107,37 @@ def extraer_telefono(texto):
 
     return None
 
+def normalizar_extracciones(extracted, user_question):
+    texto = user_question.lower().strip()
+
+    # Teléfonos
+    telefono = extraer_telefono(user_question)
+    if telefono:
+        extracted["phone_contact"] = telefono
+
+    # Números escritos en texto
+    numeros_texto = {
+        "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4,
+        "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+    }
+
+    if not extracted.get("people"):
+        # Número exacto como mensaje
+        if texto in numeros_texto:
+            extracted["people"] = numeros_texto[texto]
+        elif texto.isdigit():
+            extracted["people"] = int(texto)
+        else:
+            # Número dentro de una frase: "somos 3", "viajamos 4 personas", etc.
+            match = re.search(r'\b(\d+)\b', texto)
+            if match:
+                num = int(match.group(1))
+                # Evitar confundir años o presupuestos con personas
+                if 1 <= num <= 20:
+                    extracted["people"] = num
+
+    return extracted
+
 def calcular_estado_presupuesto(destination, people, budget):
 
     if not destination or not people or not budget:
@@ -162,7 +193,7 @@ def calcular_estado_presupuesto(destination, people, budget):
         else:
             return "good"
 
-    except:
+    except Exception as e:
         print(f"ERROR PRESUPUESTO: {e}")
         return None
 
@@ -201,7 +232,7 @@ def lambda_handler(event, context):
         response = table.get_item(Key={"user_id": user_id})
         memory = response.get("Item", {
             "user_id": user_id,
-           "destination": None,
+            "destination": None,
             "people": None,
             "date": None,
             "budget": None,
@@ -214,7 +245,8 @@ def lambda_handler(event, context):
             "user_type": None,
             "phone_contact": None,
             "budget_status": None,
-            "budget_known": False
+            "budget_known": False,
+            "name" : None
         })
         nuevo_tipo = detectar_tipo_usuario(user_question)
 
@@ -246,12 +278,15 @@ def lambda_handler(event, context):
             ["destination", "people", "date", "budget"]
         )
 
-        lead_fields = prompt_config.get(
-            "lead_fields",
-            ["destination", "people", "date", "budget"]
-        )        
-        
         required_fields_count = len(lead_fields)
+
+        faltantes = []
+
+        for campo in lead_fields:
+            if not memory.get(campo):
+                faltantes.append(campo)
+        
+        faltantes_texto = ", ".join(faltantes)
 
         # 🚫 FILTRO DE TIPO DE USUARIO
         if memory.get("user_type") == "proveedor":
@@ -269,7 +304,7 @@ def lambda_handler(event, context):
                     "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo lo antes posible para ayudarte en lo que necesites."
                 })
             }
-
+        
         # 2. OpenAI
         system_prompt = f"""
 CONTEXTO AGENCIA: {agency_knowledge}
@@ -278,6 +313,15 @@ asesora de viajes de {prompt_config['company_name']}.
 
 MEMORIA CLIENTE:
 {json.dumps(safe_memory)}
+
+DATOS YA OBTENIDOS:
+Destino: {memory.get("destination")}
+Viajeros: {memory.get("people")}
+Fecha: {memory.get("date")}
+Presupuesto: {memory.get("budget")}
+
+DATOS FALTANTES:
+{faltantes_texto}
 
 ESTADO PRESUPUESTO:
 {memory.get("budget_status")}
@@ -288,7 +332,7 @@ TU MISIÓN:
 REGLAS DE RECOMENDACIÓN:
 {chr(10).join(prompt_config['recommendation_rules'])}
 
-REGLaS DE EXTRACCIÓN DE DATOS:
+REGLAS DE EXTRACCIÓN DE DATOS:
 {chr(10).join(prompt_config['extraction_rules'])}
 
 REGLAS DE ORO:
@@ -310,25 +354,28 @@ RESPONDE SIEMPRE EN JSON:
 }}
 """
 
+        messages_to_send = [{"role": "system", "content": system_prompt}]
+
+        for msg in memory.get("history", [])[-6:]:
+            messages_to_send.append({"role": "user",      "content": msg["user"]})
+            messages_to_send.append({"role": "assistant", "content": msg["assistant"]})
+
+        messages_to_send.append({"role": "user", "content": user_question})
+
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_question}
-            ],
+            messages=messages_to_send,
             response_format={"type": "json_object"}
         )
 
         ai_response = json.loads(completion.choices[0].message.content)
         
         extracted = ai_response.get("extracted_data", {})
-        print("USER:", user_question)
-        print("EXTRACTED:", extracted)
-        
-        telefono_detectado = extraer_telefono(user_question)
 
-        if telefono_detectado:
-            extracted["phone_contact"] = telefono_detectado
+        extracted = normalizar_extracciones(
+            extracted,
+            user_question
+        )
 
         # 3. Sincronizar Memoria
         # phone_contact incluido en la sincronización
@@ -342,6 +389,29 @@ RESPONDE SIEMPRE EN JSON:
 
             if val and str(val).lower() not in ["null", "none"]:
                 memory[key] = val
+
+        if (
+            memory.get("destination")
+            and memory.get("people")
+            and memory.get("date")
+            and memory.get("budget_unknown")
+            and not memory.get("phone_contact")
+        ):
+            ai_response["answer"] = (
+                "Entiendo! Si aún no cuentas con un presupuesto definido, "
+                "uno de nuestros asesores puede orientarte sobre costos y opciones disponibles. "
+                "Por favor indícanos un número de teléfono o un correo electrónico y nos pondremos en contacto contigo lo antes posible."
+            )
+        
+        if (
+            memory.get("budget_unknown")
+            and memory.get("phone_contact")
+        ):
+        
+            ai_response["answer"] = (
+                "Perfecto. Hemos recibido tu número de contacto. "
+                "Uno de nuestros asesores se comunicará contigo lo antes posible para ayudarte a evaluar opciones y presupuesto para tu viaje."
+            )        
 
         texto_normalizado = user_question.lower().strip()
 
@@ -376,42 +446,29 @@ RESPONDE SIEMPRE EN JSON:
         print("BUDGET STATUS:", memory.get("budget_status"))
         print("BUDGET UNKNOWN:", memory.get("budget_unknown"))
 
-        if (
-            memory.get("destination")
-            and memory.get("people")
-            and memory.get("date")
-            and memory.get("budget_unknown")
-            and not memory.get("phone_contact")
-        ):
-            ai_response["answer"] = (
-                "Entiendo! Si aún no cuentas con un presupuesto definido, "
-                "uno de nuestros asesores puede orientarte sobre costos y opciones disponibles. "
-                "Por favor indícanos un número de teléfono y nos pondremos en contacto contigo lo antes posible."
-            )
-        
-        if (
-            memory.get("budget_unknown")
-            and memory.get("phone_contact")
-        ):
-        
-            ai_response["answer"] = (
-                "Perfecto. Hemos recibido tu número de contacto. "
-                "Uno de nuestros asesores se comunicará contigo lo antes posible para ayudarte a evaluar opciones y presupuesto para tu viaje."
-            )
-
         if (    
             memory["budget_status"] == "low"
             and memory.get("destination")
             and memory.get("people")
             and memory.get("date")
             and memory.get("budget")
+            and not memory.get("phone_contact")
         ):
 
            ai_response["answer"] = (
                "Gracias por compartir los datos de tu viaje. "
                "Para el destino y la cantidad de viajeros indicados, el presupuesto podría resultar ajustado según las fechas y la disponibilidad. "
-               "Si lo deseas, déjanos un número de contacto y un asesor se comunicará contigo lo antes posible para ayudarte a encontrar mejores opciones."
+               "Si lo deseas, déjanos un número de contacto o un correo electrónico y un asesor se comunicará contigo lo antes posible para ayudarte a encontrar mejores opciones."
             )
+           
+        elif (
+            memory["budget_status"] == "low"
+            and memory.get("phone_contact")
+        ):
+            ai_response["answer"] = (
+                "Perfecto. Hemos recibido tu número de contacto. "
+                "Un asesor se comunicará contigo lo antes posible."
+            )   
 
         # 4. Evaluación de Lead
         filled = sum(

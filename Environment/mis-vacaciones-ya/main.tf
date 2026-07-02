@@ -45,6 +45,8 @@ module "chat_ia" {
         PROMPT_FILE        = "prompt.json"
         BUSINESS_TYPE      = var.business_type
         AUDIT_BUCKET       = aws_s3_bucket.audit.bucket
+        WHATCRM_INSTANCE   = var.whatcrm_instance
+        WHATCRM_TOKEN      = var.whatcrm_token
 
     }
 }

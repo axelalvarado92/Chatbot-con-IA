@@ -8,6 +8,7 @@ from decimal import Decimal
 from datetime import datetime
 import uuid
 import re
+import sys
 
 def guardar_auditoria(
     bucket,
@@ -202,7 +203,28 @@ s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-def lambda_handler(event, context):            
+def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
+
+    url = f"https://api.whatcrm.net/instances/{WHATCRM_INSTANCE}/sendMessage"
+    
+    headers = {
+        "X-Crm-Token": WHATCRM_TOKEN,
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "chatId": chat_id,
+        "body": texto,
+        "sendSeen": "1"
+    }
+    
+    res = requests.post(url, json=payload, headers=headers, timeout=10)
+    print(f"URL utilizada: {url}")
+    print(f"WhatCRM response: {res.status_code} - {res.text}")
+
+def lambda_handler(event, context):
+    print("RAW EVENT:", json.dumps(event, default=str), flush=True)
+    sys.stdout.flush()            
     try:
         # 0. Configuración Inicial
         TABLE_NAME     = os.environ.get("TABLE_NAME")
@@ -212,20 +234,96 @@ def lambda_handler(event, context):
         BUSINESS_TYPE  = os.environ.get("BUSINESS_TYPE", "travel")
         PROMPT_FILE    = os.environ.get("PROMPT_FILE", "prompt.json")
         AUDIT_BUCKET   = os.environ.get("AUDIT_BUCKET")
-
-        raw_body = event.get("body", "")
+        WHATCRM_INSTANCE = os.environ.get("WHATCRM_INSTANCE")
+        WHATCRM_TOKEN    = os.environ.get("WHATCRM_TOKEN")
 
         try:
+            # ======================================
+            # Parseo del body
+            # ======================================
+            raw_body = event.get("body", "{}")
             body = json.loads(raw_body)
-            # 1: eliminada la detección de WhatCRM, un solo formato
-            user_id = body.get("user_id")
-            user_question = body.get("question")
-        except:
+        
             user_id = None
             user_question = None
-
-        if not user_id or not user_question:
-            return {"statusCode": 400, "body": json.dumps({"error": "Faltan datos"})}
+            channel = None
+        
+            # ======================================
+            # WEB
+            # ======================================
+            if "question" in body:
+        
+                print("Canal detectado: WEB")
+        
+                channel = "web"
+                user_id = body.get("user_id")
+                user_question = body.get("question")
+        
+            # ======================================
+            # WHATSAPP
+            # ======================================
+            elif "messages" in body:
+        
+                print("Canal detectado: WhatsApp")
+        
+                messages = body.get("messages", [])
+        
+                if len(messages) == 0:
+                    raise Exception("No hay mensajes")
+        
+                mensaje = messages[0]
+        
+                # Ignorar mensajes enviados por el bot
+                if mensaje.get("fromMe"):
+        
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({"ok": True})
+                    }
+        
+                channel = "whatsapp"
+                user_id = mensaje.get("chatId")
+                user_question = mensaje.get("body")
+        
+            # ======================================
+            # Formato desconocido
+            # ======================================
+            else:
+        
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps({
+                        "error": "Formato de request no soportado"
+                    })
+                }
+        
+            # ======================================
+            # Validaciones
+            # ======================================
+            if not user_id or not user_question:
+        
+                return {
+                    "statusCode": 400,
+                    "body": json.dumps({
+                        "error": "Faltan datos"
+                    })
+                }
+        
+            print(f"Canal: {channel}")
+            print(f"Usuario: {user_id}")
+            print(f"Pregunta: {user_question}")
+        
+        except Exception as parse_err:
+        
+            print("ERROR PARSEO")
+            print(str(parse_err))
+        
+            return {
+                "statusCode": 400,
+                "body": json.dumps({
+                    "error": str(parse_err)
+                })
+            }
 
         # 1. Recuperar Memoria
         table = dynamodb.Table(TABLE_NAME)
@@ -657,7 +755,8 @@ RESPONDE SIEMPRE EN JSON:
             except Exception as e:
                 print(f"Error actualizando lead: {e}")
 
-        # 7. Guardar Memoria
+
+       # 7. Guardar Memoria
         memory["lead_status"] = new_status
         history = memory.get("history", [])
         history.append({
@@ -669,7 +768,6 @@ RESPONDE SIEMPRE EN JSON:
         table.put_item(Item=convert_decimals(memory))
 
         if AUDIT_BUCKET:
-
             guardar_auditoria(
                 AUDIT_BUCKET,
                 user_id,
@@ -679,14 +777,44 @@ RESPONDE SIEMPRE EN JSON:
                 new_status
             )
 
-        # 7: return unificado, eliminado el bloque condicional de WhatCRM
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "answer": ai_response.get("answer"),
-                "lead_status": new_status
-            })
-        }
+        # ======================================
+        # Respuesta según canal
+        # ======================================
+        
+        if channel == "whatsapp":
+
+            if WHATCRM_INSTANCE and WHATCRM_TOKEN:
+                enviar_respuesta_whatcrm(
+                    WHATCRM_INSTANCE,
+                    WHATCRM_TOKEN,
+                    user_id,
+                    ai_response.get("answer")
+                )
+        
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "status": "sent"
+                })
+            }
+        
+        elif channel == "web":
+        
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "answer": ai_response.get("answer")
+                })
+            }
+        
+        else:
+        
+            return {
+                "statusCode": 500,
+                "body": json.dumps({
+                    "error": "Canal desconocido"
+                })
+            }
 
     except Exception as e:
         print(f"ERROR GENERAL: {e}")

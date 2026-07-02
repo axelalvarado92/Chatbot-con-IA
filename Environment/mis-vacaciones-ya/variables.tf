@@ -42,3 +42,15 @@ variable "client_name" {
     type = string
     
 }
+
+variable "whatcrm_instance" {
+    description = "Instancia de WhatCRM"
+    type = string
+      
+}
+
+variable "whatcrm_token" {
+    description = "Token de WhatCRM"
+    type = string
+      
+}

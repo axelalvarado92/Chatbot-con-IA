@@ -52,7 +52,7 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
       "dynamodb:UpdateItem",
       "dynamodb:Query"
     ]
-    resources = [var.dynamodb_table_arn] 
+    resources = [var.dynamodb_table_arn, var.assistant_table_arn] 
   }
   statement {
   sid    = "AuditBucketWrite"

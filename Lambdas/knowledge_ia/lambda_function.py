@@ -3,12 +3,41 @@ import boto3
 import os
 import requests
 import re
+import uuid
+import sys
+import time
 from openai import OpenAI
 from decimal import Decimal
 from datetime import datetime
-import uuid
-import re
-import sys
+
+from service.helpers import (
+    convert_decimals,
+    extraer_telefono,
+    detectar_pais,
+    detectar_tipo_usuario,
+    normalizar_extracciones,
+    calcular_estado_presupuesto,
+    formatear_historial
+)
+
+from service.config_service import (
+    obtener_o_crear_configuracion,
+    guardar_configuracion,
+    es_administrador,
+    puede_responder,
+    obtener_configuracion
+)
+
+from service.memory_service import (
+    obtener_memoria,
+)
+
+from service.whatsapp_service import enviar_respuesta_whatcrm
+
+from service.prompt_service import (
+    obtener_prompt,
+    obtener_knowledge
+)
 
 def guardar_auditoria(
     bucket,
@@ -52,190 +81,41 @@ def guardar_auditoria(
     except Exception as e:
         print(f"Error guardando auditoría: {e}")
 
-# --- UTILIDADES ---
-def detectar_tipo_usuario(texto):
-    t = texto.lower()
-
-    if any(p in t for p in ["proveedor", "hotel", "agencia", "partner", "colaboración"]):
-        return "proveedor"
-
-    if any(p in t for p in ["ya viaje", "ya viajé", "cliente", "viaje con ustedes", "compré", "compre"]):
-        return "cliente"
-
-    return "lead"
-
-def formatear_historial(history, assistant_name="Asistente"):
-    if not history:
-        return "No hay historial previo."
-
-    texto = f"--- CONVERSACIÓN CON IA {assistant_name.upper()} ---\n"
-
-    for msg in history:
-        u = msg.get('user', 'Usuario')
-        a = msg.get('assistant', assistant_name)
-
-        texto += f"Cliente: {u}\n"
-        texto += f"Asistente: {a}\n"
-        texto += "----------------\n"
-
-    return texto
-
-def convert_decimals(obj):
-    if isinstance(obj, list): return [convert_decimals(i) for i in obj]
-    elif isinstance(obj, dict): return {k: convert_decimals(v) for k, v in obj.items()}
-    elif isinstance(obj, Decimal): return int(obj) if obj % 1 == 0 else float(obj)
-    return obj
-
-def detectar_pais(texto):
-    t = texto.lower()
-
-    if any(p in t for p in ["argentina", "argentino", "arg"]):
-        return "Argentina"
-
-    if any(p in t for p in ["españa", "español", "espania", "espańa"]):
-        return "España"
-
-    return "No definido"
-
-def extraer_telefono(texto):
-
-    patron = r'(\+?\d[\d\s\-\(\)]{7,20}\d)'
-
-    match = re.search(patron, texto)
-
-    if match:
-        return match.group(1)
-
-    return None
-
-def normalizar_extracciones(extracted, user_question):
-    texto = user_question.lower().strip()
-
-    # Teléfonos
-    telefono = extraer_telefono(user_question)
-    if telefono:
-        extracted["phone_contact"] = telefono
-
-    # Números escritos en texto
-    numeros_texto = {
-        "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4,
-        "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
-    }
-
-    if not extracted.get("people"):
-        # Número exacto como mensaje
-        if texto in numeros_texto:
-            extracted["people"] = numeros_texto[texto]
-        elif texto.isdigit():
-            extracted["people"] = int(texto)
-        else:
-            # Número dentro de una frase: "somos 3", "viajamos 4 personas", etc.
-            match = re.search(r'\b(\d+)\b', texto)
-            if match:
-                num = int(match.group(1))
-                # Evitar confundir años o presupuestos con personas
-                if 1 <= num <= 20:
-                    extracted["people"] = num
-
-    return extracted
-
-def calcular_estado_presupuesto(destination, people, budget):
-
-    if not destination or not people or not budget:
-        return None
-
-    try:
-
-        print(f"Destino recibido: {destination}")
-        print(f"Personas recibidas: {people}")
-        print(f"Budget recibido: {budget}")
-
-        destino = str(destination).lower().strip()
-
-        budget_clean = re.sub(
-            r"[^\d]",
-            "",
-            str(budget)
-        )
-
-        presupuesto_total = float(budget_clean)
-
-        viajeros = int(people)
-
-        MIN_BUDGETS = {
-            "china": 5000,
-            "japon": 6000,
-            "japón": 6000,
-            "egipto": 3500,
-            "turquia": 4000,
-            "turquía": 4000,
-            "grecia": 4000,
-            "españa": 4500,
-            "espana": 4500,
-            "italia": 4500
-        }
-
-        minimo_persona = MIN_BUDGETS.get(destino)
-
-        if not minimo_persona:
-            return None
-
-        minimo_total = minimo_persona * viajeros
-
-        print(f"Presupuesto limpio: {presupuesto_total}")
-        print(f"Minimo requerido: {minimo_total}")
-
-        if presupuesto_total < minimo_total:
-            return "low"
-
-        elif presupuesto_total < minimo_total * 1.3:
-            return "adjusted"
-
-        else:
-            return "good"
-
-    except Exception as e:
-        print(f"ERROR PRESUPUESTO: {e}")
-        return None
-
 # --- CLIENTES ---
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
-
-    url = f"https://api.whatcrm.net/instances/{WHATCRM_INSTANCE}/sendMessage"
-    
-    headers = {
-        "X-Crm-Token": WHATCRM_TOKEN,
-        "Content-Type": "application/json"
+CHANNEL_POLICY = {
+    "web": {
+        "ask_phone": True,
+        "require_phone_for_hot": True,
+        "auto_hot": False
+    },
+    "whatsapp": {
+        "ask_phone": False,
+        "require_phone_for_hot": False,
+        "auto_hot": True
     }
-    
-    payload = {
-        "chatId": chat_id,
-        "body": texto,
-        "sendSeen": "1"
-    }
-    
-    res = requests.post(url, json=payload, headers=headers, timeout=10)
-    print(f"URL utilizada: {url}")
-    print(f"WhatCRM response: {res.status_code} - {res.text}")
+}
 
 def lambda_handler(event, context):
     print("RAW EVENT:", json.dumps(event, default=str), flush=True)
     sys.stdout.flush()            
     try:
         # 0. Configuración Inicial
-        TABLE_NAME     = os.environ.get("TABLE_NAME")
-        BUCKET_NAME    = os.environ.get("BUCKET_NAME")
-        KNOWLEDGE_FILE = os.environ.get("KNOWLEDGE_FILE")
-        BITRIX_WEBHOOK = os.environ.get("BITRIX_WEBHOOK_URL")
-        BUSINESS_TYPE  = os.environ.get("BUSINESS_TYPE", "travel")
-        PROMPT_FILE    = os.environ.get("PROMPT_FILE", "prompt.json")
-        AUDIT_BUCKET   = os.environ.get("AUDIT_BUCKET")
-        WHATCRM_INSTANCE = os.environ.get("WHATCRM_INSTANCE")
-        WHATCRM_TOKEN    = os.environ.get("WHATCRM_TOKEN")
+        TABLE_NAME             = os.environ.get("TABLE_NAME")
+        BUCKET_NAME            = os.environ.get("BUCKET_NAME")
+        KNOWLEDGE_FILE         = os.environ.get("KNOWLEDGE_FILE")
+        BITRIX_WEBHOOK         = os.environ.get("BITRIX_WEBHOOK_URL")
+        BUSINESS_TYPE          = os.environ.get("BUSINESS_TYPE", "travel")
+        PROMPT_FILE            = os.environ.get("PROMPT_FILE", "prompt.json")
+        AUDIT_BUCKET           = os.environ.get("AUDIT_BUCKET")
+        WHATCRM_INSTANCE       = os.environ.get("WHATCRM_INSTANCE")
+        WHATCRM_TOKEN          = os.environ.get("WHATCRM_TOKEN")
+        DEBUG_WHATSAPP         = os.environ.get("DEBUG_WHATSAPP", "false").lower() == "true"
+        SEND_WHATSAPP_MESSAGES = os.environ.get("SEND_WHATSAPP_MESSAGES", "true").lower() == "true"
+        CONFIG_TABLE_NAME      = os.environ.get("CONFIG_TABLE_NAME")
 
         try:
             # ======================================
@@ -256,6 +136,7 @@ def lambda_handler(event, context):
                 print("Canal detectado: WEB")
         
                 channel = "web"
+                policy = CHANNEL_POLICY.get(channel, CHANNEL_POLICY["web"])
                 user_id = body.get("user_id")
                 user_question = body.get("question")
         
@@ -282,6 +163,7 @@ def lambda_handler(event, context):
                     }
         
                 channel = "whatsapp"
+                policy = CHANNEL_POLICY.get(channel, CHANNEL_POLICY["web"])
                 user_id = mensaje.get("chatId")
                 user_question = mensaje.get("body")
         
@@ -327,25 +209,14 @@ def lambda_handler(event, context):
 
         # 1. Recuperar Memoria
         table = dynamodb.Table(TABLE_NAME)
-        response = table.get_item(Key={"user_id": user_id})
-        memory = response.get("Item", {
-            "user_id": user_id,
-            "destination": None,
-            "people": None,
-            "date": None,
-            "budget": None,
-            "lead_status": "cold",
-            "history": [],
-            "email": None,
-            "country": "No definido",
-            "lead_sent": False,
-            "lead_id": None,
-            "user_type": None,
-            "phone_contact": None,
-            "budget_status": None,
-            "budget_known": False,
-            "name" : None
-        })
+        config_table = dynamodb.Table(CONFIG_TABLE_NAME)
+        config = obtener_o_crear_configuracion(config_table)
+
+        memory = obtener_memoria(
+            table,
+            user_id
+        )
+        
         nuevo_tipo = detectar_tipo_usuario(user_question)
 
         if nuevo_tipo != "lead":
@@ -353,22 +224,24 @@ def lambda_handler(event, context):
         elif not memory.get("user_type"):
             memory["user_type"] = "lead"        
 
+        if channel == "whatsapp":
+            numero_limpio = user_id.split('@')[0] if '@' in user_id else user_id
+            memory["phone_contact"] = numero_limpio
+
         pais_det = detectar_pais(user_question)
         if pais_det != "No definido":
             memory["country"] = pais_det
 
         safe_memory = convert_decimals(memory)
 
-        s3_resp = s3.get_object(Bucket=BUCKET_NAME, Key=KNOWLEDGE_FILE)
-        agency_knowledge = s3_resp["Body"].read().decode("utf-8")
-
-        prompt_resp = s3.get_object(
-            Bucket=BUCKET_NAME,
-            Key=PROMPT_FILE
+        agency_knowledge = obtener_knowledge(
+            BUCKET_NAME,
+            KNOWLEDGE_FILE
         )
         
-        prompt_config = json.loads(
-            prompt_resp["Body"].read().decode("utf-8")
+        prompt_config = obtener_prompt(
+            BUCKET_NAME,
+            PROMPT_FILE
         )
 
         lead_fields = prompt_config.get(
@@ -386,6 +259,17 @@ def lambda_handler(event, context):
         
         faltantes_texto = ", ".join(faltantes)
 
+        if not puede_responder(memory, config, channel):
+
+            print("Bot deshabilitado para esta conversación.")
+        
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "status": "bot_disabled"
+                })
+            }
+
         # 🚫 FILTRO DE TIPO DE USUARIO
         if memory.get("user_type") == "proveedor":
             return {
@@ -395,11 +279,11 @@ def lambda_handler(event, context):
                 })
             }
 
-        if memory.get("user_type") == "cliente":
+        if memory.get("user_type") == "cliente" and channel == "web":
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo lo antes posible para ayudarte en lo que necesites."
+                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo..."
                 })
             }
         
@@ -455,8 +339,18 @@ RESPONDE SIEMPRE EN JSON:
         messages_to_send = [{"role": "system", "content": system_prompt}]
 
         for msg in memory.get("history", [])[-6:]:
-            messages_to_send.append({"role": "user",      "content": msg["user"]})
-            messages_to_send.append({"role": "assistant", "content": msg["assistant"]})
+
+            if msg.get("user"):
+                messages_to_send.append({
+                    "role": "user",
+                    "content": msg["user"]
+                })
+        
+            if msg.get("assistant"):
+                messages_to_send.append({
+                    "role": "assistant",
+                    "content": msg["assistant"]
+                })
 
         messages_to_send.append({"role": "user", "content": user_question})
 
@@ -467,6 +361,11 @@ RESPONDE SIEMPRE EN JSON:
         )
 
         ai_response = json.loads(completion.choices[0].message.content)
+        print("========== RAW OPENAI ==========")
+        print(completion.choices[0].message.content)
+        
+        print("========== PARSED ==========")
+        print(ai_response)
         
         extracted = ai_response.get("extracted_data", {})
 
@@ -481,11 +380,19 @@ RESPONDE SIEMPRE EN JSON:
 
         if "phone_contact" not in campos_memoria:
             campos_memoria.append("phone_contact")
+
+        if channel == "whatsapp" and not memory.get("phone_contact"):
+           memory["phone_contact"] = user_id.split('@')[0]        
+    
         
         for key in campos_memoria:
             val = extracted.get(key)
-
+        
             if val and str(val).lower() not in ["null", "none"]:
+        
+                if key == "phone_contact" and channel == "whatsapp":
+                    continue
+        
                 memory[key] = val
 
         if (
@@ -493,6 +400,7 @@ RESPONDE SIEMPRE EN JSON:
             and memory.get("people")
             and memory.get("date")
             and memory.get("budget_unknown")
+            and policy["ask_phone"]
             and not memory.get("phone_contact")
         ):
             ai_response["answer"] = (
@@ -544,12 +452,12 @@ RESPONDE SIEMPRE EN JSON:
         print("BUDGET STATUS:", memory.get("budget_status"))
         print("BUDGET UNKNOWN:", memory.get("budget_unknown"))
 
-        if (    
+        if (
             memory["budget_status"] == "low"
             and memory.get("destination")
             and memory.get("people")
             and memory.get("date")
-            and memory.get("budget")
+            and policy["ask_phone"]
             and not memory.get("phone_contact")
         ):
 
@@ -576,55 +484,28 @@ RESPONDE SIEMPRE EN JSON:
         )
         budget_status = memory.get("budget_status")
 
-        # HOT requiere los 4 datos + teléfono de contacto
-        if BUSINESS_TYPE == "travel":
-
-            budget_status = memory.get("budget_status")
-
-            if (
-                (
-                    filled == required_fields_count
-                    and memory.get("phone_contact")
-                )
-                or
-                (
-                    memory.get("destination")
-                    and memory.get("people")
-                    and memory.get("date")
-                    and memory.get("budget_unknown")
-                    and memory.get("phone_contact")
-                )
-            ):
-                new_status = "hot"
-            
-            elif (
-                memory.get("destination")
-                and memory.get("people")
-                and memory.get("date")
-                and memory.get("budget_unknown")
-                and memory.get("phone_contact")
-            ):
-                new_status = "hot"
-
-            elif (
-                memory.get("destination")
-                or memory.get("budget")
-                or memory.get("people")
-                or memory.get("date")
-            ):
-                new_status = "warm"
-
-            else:
-                new_status = "cold"
-        
+        base_hot = (
+            memory.get("destination")
+            and memory.get("people")
+            and memory.get("date")
+        )
+        if policy["auto_hot"]:
+            new_status = "hot" if base_hot else "warm"
         else:
-        
-            if filled == 4:
-                new_status = "hot"
-            elif filled > 0:
-                new_status = "warm"
-            else:
-                new_status = "cold"
+            if BUSINESS_TYPE == "travel":
+                if (
+                    (filled == required_fields_count and memory.get("phone_contact") and policy["require_phone_for_hot"])
+                    or
+                    (base_hot and memory.get("budget_unknown") and memory.get("phone_contact") and policy["require_phone_for_hot"])
+                    or
+                    (base_hot and not policy["require_phone_for_hot"])
+                ):
+                    new_status = "hot"
+                elif base_hot:
+                    new_status = "warm"
+                else:
+                    new_status = "cold"
+
 
         # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
         if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
@@ -759,9 +640,12 @@ RESPONDE SIEMPRE EN JSON:
        # 7. Guardar Memoria
         memory["lead_status"] = new_status
         history = memory.get("history", [])
+        
+        respuesta = ai_response.get("answer")
+
         history.append({
             "user": user_question,
-            "assistant": ai_response.get("answer")
+            "assistant": respuesta if respuesta else ""
         })
         memory["history"] = history[-20:]
 
@@ -783,27 +667,53 @@ RESPONDE SIEMPRE EN JSON:
         
         if channel == "whatsapp":
 
-            if WHATCRM_INSTANCE and WHATCRM_TOKEN:
+            respuesta_texto = ai_response.get("answer", "")
+
+            if SEND_WHATSAPP_MESSAGES and WHATCRM_INSTANCE and WHATCRM_TOKEN:
+            
+                tiempo_espera = min(max(len(respuesta_texto) / 50, 2), 5)
+            
+                print(f"Esperando {tiempo_espera} segundos antes de responder por WhatsApp...")
+                time.sleep(tiempo_espera)
+            
                 enviar_respuesta_whatcrm(
                     WHATCRM_INSTANCE,
                     WHATCRM_TOKEN,
                     user_id,
-                    ai_response.get("answer")
+                    respuesta_texto
                 )
+            else:
+                print("Modo desarrollo: mensaje NO enviado a WhatsApp.")
         
+            debug_response = {
+                "status": "sent"
+            }
+            if DEBUG_WHATSAPP:
+                debug_response.update({
+                    "answer": ai_response.get("answer"),
+                    "memory": convert_decimals(memory),
+                    "lead_status": memory.get("lead_status"),
+                    "user_type": memory.get("user_type"),
+                    "budget_status": memory.get("budget_status"),
+                    "channel": channel,
+                    "lead_sent": memory.get("lead_sent"),
+                    "lead_id": memory.get("lead_id"),
+                    "phone_contact": memory.get("phone_contact"),
+                    "budget_unknown": memory.get("budget_unknown"),
+                    "send_whatsapp_messages": SEND_WHATSAPP_MESSAGES
+                })
+
             return {
                 "statusCode": 200,
-                "body": json.dumps({
-                    "status": "sent"
-                })
-            }
+                "body": json.dumps(debug_response)
+            }   
         
         elif channel == "web":
         
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "answer": ai_response.get("answer")
+                "answer": ai_response.get("answer")
                 })
             }
         

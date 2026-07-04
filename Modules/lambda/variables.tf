@@ -70,3 +70,8 @@ variable "audit_bucket_arn" {
     description = "The ARN of the S3 bucket for audit logs"
     type        = string
 }
+
+variable "assistant_table_arn" {
+    description = "The ARN of the DynamoDB table for assistant config"
+    type        = string
+}

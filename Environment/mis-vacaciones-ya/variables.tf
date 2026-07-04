@@ -54,3 +54,15 @@ variable "whatcrm_token" {
     type = string
       
 }
+
+variable "debug_whatsapp" {
+    description = "Habilitar modo de depuración para WhatsApp"
+    type = bool
+    default = false
+}
+
+variable "send_whatsapp_messages" {
+    description = "Habilitar el envío de mensajes de WhatsApp"
+    type = bool
+    default = true
+}

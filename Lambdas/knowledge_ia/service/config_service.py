@@ -36,9 +36,18 @@ def obtener_o_crear_configuracion(config_table):
 
     config = {
         "config_id": "global",
+    
+        # Estado del bot
         "bot_enabled": True,
-        "working_hours_enabled": False,
         "maintenance_mode": False,
+    
+        # Horarios
+        "working_hours_enabled": False,
+        "working_start": "09:00",
+        "working_end": "18:00",
+        "timezone": "America/Argentina/Buenos_Aires",
+    
+        # Administración
         "admin_phone": None
     }
     
@@ -58,3 +67,9 @@ def es_administrador(user_id, config):
     numero = user_id.split("@")[0]
 
     return numero == config.get("admin_phone")
+
+def es_comando_admin(texto):
+    if not texto:
+        return False
+
+    return texto.strip().lower().startswith("#bot")

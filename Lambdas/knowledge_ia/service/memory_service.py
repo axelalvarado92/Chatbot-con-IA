@@ -20,7 +20,7 @@ def obtener_memoria(table, user_id):
         "phone_contact": None,
         "budget_status": None,
         "budget_known": False,
-        "name": None
+        "name": None,
     })
 
     return memory

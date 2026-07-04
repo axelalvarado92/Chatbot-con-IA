@@ -9,6 +9,7 @@ import time
 from openai import OpenAI
 from decimal import Decimal
 from datetime import datetime
+import traceback
 
 from service.helpers import (
     convert_decimals,
@@ -25,7 +26,8 @@ from service.config_service import (
     guardar_configuracion,
     es_administrador,
     puede_responder,
-    obtener_configuracion
+    obtener_configuracion,
+    es_comando_admin
 )
 
 from service.memory_service import (
@@ -259,17 +261,6 @@ def lambda_handler(event, context):
         
         faltantes_texto = ", ".join(faltantes)
 
-        if not puede_responder(memory, config, channel):
-
-            print("Bot deshabilitado para esta conversación.")
-        
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "status": "bot_disabled"
-                })
-            }
-
         # 🚫 FILTRO DE TIPO DE USUARIO
         if memory.get("user_type") == "proveedor":
             return {
@@ -284,6 +275,98 @@ def lambda_handler(event, context):
                 "statusCode": 200,
                 "body": json.dumps({
                     "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo..."
+                })
+            }
+        
+        # ======================================
+        # Comandos de administración
+        # ======================================
+        
+        if (
+            channel == "whatsapp"
+            and es_comando_admin(user_question)
+        ):
+        
+            comando = user_question.strip().lower()
+
+            if (
+                comando != "#bot registrar"
+                and not es_administrador(user_id, config)
+            ):
+            
+                return {
+                    "statusCode": 403,
+                    "body": json.dumps({
+                        "answer": "No tienes permisos para ejecutar este comando."
+                    })
+                }
+
+            if comando == "#bot status":
+
+                if config.get("admin_phone"):
+            
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "answer": "Ya existe un administrador registrado."
+                        })
+                    }
+            
+                numero_admin = user_id.split("@")[0] if "@" in user_id else user_id
+                config["admin_phone"] = numero_admin
+            
+                guardar_configuracion(config_table, config)
+            
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "answer": "✅ Administrador registrado correctamente."
+                    })
+                }
+        
+            if comando == "#bot status":
+        
+                estado = "ACTIVO ✅" if config.get("bot_enabled", True) else "DESACTIVADO ⛔"
+        
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "answer": f"Estado del bot: {estado}"
+                    })
+                }
+            
+            elif comando == "#bot off":
+
+                config["bot_enabled"] = False
+                guardar_configuracion(config_table, config)
+        
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "answer": "✅ Bot desactivado."
+                    })
+                }
+        
+            elif comando == "#bot on":
+        
+                config["bot_enabled"] = True
+                guardar_configuracion(config_table, config)
+        
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "answer": "✅ Bot activado."
+                    })
+                }
+        
+        if not puede_responder(memory, config, channel):
+
+            print("Bot deshabilitado para esta conversación.")
+        
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "status": "bot_disabled"
                 })
             }
         
@@ -705,8 +788,10 @@ RESPONDE SIEMPRE EN JSON:
 
             return {
                 "statusCode": 200,
-                "body": json.dumps(debug_response)
-            }   
+                "body": json.dumps(
+                    convert_decimals(debug_response)
+                )
+            }
         
         elif channel == "web":
         
@@ -727,7 +812,9 @@ RESPONDE SIEMPRE EN JSON:
             }
 
     except Exception as e:
-        print(f"ERROR GENERAL: {e}")
+        print("========== ERROR GENERAL ==========")
+        traceback.print_exc()
+    
         return {
             "statusCode": 500,
             "body": json.dumps({

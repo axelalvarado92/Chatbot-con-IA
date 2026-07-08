@@ -16,6 +16,9 @@ module "s3" {
     prompt_file_name = "prompt.json"
     prompt_file_path = "${path.root}/../../assets/${var.client_name}/prompt.json"
 
+    business_file_name = "business.json"
+    business_file_path = "${path.root}/../../assets/${var.client_name}/business.json"
+
     tags = {
         Environment = var.client_name
         Project     = var.project_name
@@ -50,13 +53,14 @@ module "chat_ia" {
         BITRIX_WEBHOOK_URL     = var.bitrix_webhook_url
         KNOWLEDGE_FILE         = "knowledge.json"
         PROMPT_FILE            = "prompt.json"
-        BUSINESS_TYPE          = var.business_type
+        BUSINESS_FILE          = "business.json"
         AUDIT_BUCKET           = aws_s3_bucket.audit.bucket
         WHATCRM_INSTANCE       = var.whatcrm_instance
         WHATCRM_TOKEN          = var.whatcrm_token
         DEBUG_WHATSAPP         = var.debug_whatsapp
         SEND_WHATSAPP_MESSAGES = var.send_whatsapp_messages
         CONFIG_TABLE_NAME      = module.assistant-config.assistant_table_name
+        SUPER_ADMIN_ID         = var.super_admin_id
 
     }
 }

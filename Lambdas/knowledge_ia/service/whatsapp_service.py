@@ -1,4 +1,39 @@
 import requests
+import time
+
+import time
+
+def responder_whatsapp(
+    texto,
+    chat_id,
+    send_messages,
+    instance,
+    token
+):
+
+    if send_messages and instance and token:
+
+        tiempo_espera = min(
+            max(len(texto) / 50, 2),
+            5
+        )
+
+        print(
+            f"Esperando {tiempo_espera} segundos antes de responder por WhatsApp..."
+        )
+
+        time.sleep(tiempo_espera)
+
+        enviar_respuesta_whatcrm(
+            instance,
+            token,
+            chat_id,
+            texto
+        )
+
+    else:
+
+        print("Modo desarrollo: mensaje NO enviado a WhatsApp.")
 
 def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
 

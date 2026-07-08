@@ -21,6 +21,7 @@ def obtener_memoria(table, user_id):
         "budget_status": None,
         "budget_known": False,
         "name": None,
+        "policy": None
     })
 
     return memory

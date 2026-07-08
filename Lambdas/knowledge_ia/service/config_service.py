@@ -1,4 +1,7 @@
 import boto3
+import os
+
+SUPER_ADMIN_ID = os.environ.get("SUPER_ADMIN_ID")
 
 def puede_responder(memory, config, channel):
 
@@ -62,11 +65,18 @@ def guardar_configuracion(config_table, config):
         Item=config
     )
 
+
 def es_administrador(user_id, config):
 
-    numero = user_id.split("@")[0]
+    if SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID:
+        return True
 
-    return numero == config.get("admin_phone")
+    admin_id = config.get("admin_id")
+
+    if admin_id and user_id == admin_id:
+        return True
+
+    return False
 
 def es_comando_admin(texto):
     if not texto:

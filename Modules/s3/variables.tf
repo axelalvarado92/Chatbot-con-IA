@@ -30,3 +30,12 @@ variable "prompt_file_path" {
     type = string
 }
 
+variable "business_file_name" {
+    description = "El nombre del archivo de configuración de negocio en el bucket s3"
+    type = string
+}
+
+variable "business_file_path" {
+    description = "La ruta local del archivo de configuración de negocio para subir a s3"
+    type = string
+}

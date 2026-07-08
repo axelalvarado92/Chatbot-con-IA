@@ -34,12 +34,17 @@ from service.memory_service import (
     obtener_memoria,
 )
 
-from service.whatsapp_service import enviar_respuesta_whatcrm
+from service.whatsapp_service import (
+    enviar_respuesta_whatcrm,
+    responder_whatsapp
+)
 
 from service.prompt_service import (
     obtener_prompt,
     obtener_knowledge
 )
+
+from service.business_service import cargar_business_config
 
 def guardar_auditoria(
     bucket,
@@ -110,7 +115,7 @@ def lambda_handler(event, context):
         BUCKET_NAME            = os.environ.get("BUCKET_NAME")
         KNOWLEDGE_FILE         = os.environ.get("KNOWLEDGE_FILE")
         BITRIX_WEBHOOK         = os.environ.get("BITRIX_WEBHOOK_URL")
-        BUSINESS_TYPE          = os.environ.get("BUSINESS_TYPE", "travel")
+        BUSINESS_FILE          = os.environ.get("BUSINESS_FILE", "business.json")
         PROMPT_FILE            = os.environ.get("PROMPT_FILE", "prompt.json")
         AUDIT_BUCKET           = os.environ.get("AUDIT_BUCKET")
         WHATCRM_INSTANCE       = os.environ.get("WHATCRM_INSTANCE")
@@ -118,8 +123,25 @@ def lambda_handler(event, context):
         DEBUG_WHATSAPP         = os.environ.get("DEBUG_WHATSAPP", "false").lower() == "true"
         SEND_WHATSAPP_MESSAGES = os.environ.get("SEND_WHATSAPP_MESSAGES", "true").lower() == "true"
         CONFIG_TABLE_NAME      = os.environ.get("CONFIG_TABLE_NAME")
+        SUPER_ADMIN_ID         = os.getenv("SUPER_ADMIN_ID")
+        
 
         try:
+
+            agency_knowledge = obtener_knowledge(
+                BUCKET_NAME,
+                KNOWLEDGE_FILE
+            )
+            
+            prompt_config = obtener_prompt(
+                BUCKET_NAME,
+                PROMPT_FILE
+            )
+    
+            business_config = cargar_business_config(
+                BUCKET_NAME,
+                BUSINESS_FILE
+            )
             # ======================================
             # Parseo del body
             # ======================================
@@ -138,7 +160,7 @@ def lambda_handler(event, context):
                 print("Canal detectado: WEB")
         
                 channel = "web"
-                policy = CHANNEL_POLICY.get(channel, CHANNEL_POLICY["web"])
+                policy = business_config["channels"]["web"]
                 user_id = body.get("user_id")
                 user_question = body.get("question")
         
@@ -155,9 +177,14 @@ def lambda_handler(event, context):
                     raise Exception("No hay mensajes")
         
                 mensaje = messages[0]
+
+                # Detectar comandos administrativos antes de ignorar mensajes propios
+                es_admin_command = es_comando_admin(
+                    mensaje.get("body", "")
+                )
         
                 # Ignorar mensajes enviados por el bot
-                if mensaje.get("fromMe"):
+                if mensaje.get("fromMe") and not es_admin_command:
         
                     return {
                         "statusCode": 200,
@@ -165,8 +192,13 @@ def lambda_handler(event, context):
                     }
         
                 channel = "whatsapp"
-                policy = CHANNEL_POLICY.get(channel, CHANNEL_POLICY["web"])
-                user_id = mensaje.get("chatId")
+                policy = business_config["channels"]["whatsapp"]
+                
+                if es_admin_command:
+                    user_id = mensaje.get("from")
+                else:
+                    user_id = mensaje.get("chatId")
+                
                 user_question = mensaje.get("body")
         
             # ======================================
@@ -236,16 +268,6 @@ def lambda_handler(event, context):
 
         safe_memory = convert_decimals(memory)
 
-        agency_knowledge = obtener_knowledge(
-            BUCKET_NAME,
-            KNOWLEDGE_FILE
-        )
-        
-        prompt_config = obtener_prompt(
-            BUCKET_NAME,
-            PROMPT_FILE
-        )
-
         lead_fields = prompt_config.get(
             "lead_fields",
             ["destination", "people", "date", "budget"]
@@ -281,19 +303,19 @@ def lambda_handler(event, context):
         # ======================================
         # Comandos de administración
         # ======================================
-        
+
         if (
             channel == "whatsapp"
             and es_comando_admin(user_question)
         ):
-        
+
             comando = user_question.strip().lower()
 
             if (
                 comando != "#bot registrar"
                 and not es_administrador(user_id, config)
             ):
-            
+                print("ADMIN 3 - Sin permisos")
                 return {
                     "statusCode": 403,
                     "body": json.dumps({
@@ -301,10 +323,9 @@ def lambda_handler(event, context):
                     })
                 }
 
-            if comando == "#bot status":
+            if comando == "#bot registrar":
 
                 if config.get("admin_phone"):
-            
                     return {
                         "statusCode": 200,
                         "body": json.dumps({
@@ -313,6 +334,7 @@ def lambda_handler(event, context):
                     }
             
                 numero_admin = user_id.split("@")[0] if "@" in user_id else user_id
+            
                 config["admin_phone"] = numero_admin
             
                 guardar_configuracion(config_table, config)
@@ -325,13 +347,28 @@ def lambda_handler(event, context):
                 }
         
             if comando == "#bot status":
-        
+
                 estado = "ACTIVO ✅" if config.get("bot_enabled", True) else "DESACTIVADO ⛔"
-        
+            
+                admin = config.get("admin_phone") or "No registrado"
+            
+                respuesta = (
+                    f"🤖 Estado: {estado}\n"
+                    f"👤 Administrador: {admin}"
+                )
+            
+                responder_whatsapp(
+                    respuesta,
+                    user_id,
+                    SEND_WHATSAPP_MESSAGES,
+                    WHATCRM_INSTANCE,
+                    WHATCRM_TOKEN
+                )
+            
                 return {
                     "statusCode": 200,
                     "body": json.dumps({
-                        "answer": f"Estado del bot: {estado}"
+                        "answer": respuesta
                     })
                 }
             
@@ -575,19 +612,18 @@ RESPONDE SIEMPRE EN JSON:
         if policy["auto_hot"]:
             new_status = "hot" if base_hot else "warm"
         else:
-            if BUSINESS_TYPE == "travel":
-                if (
-                    (filled == required_fields_count and memory.get("phone_contact") and policy["require_phone_for_hot"])
-                    or
-                    (base_hot and memory.get("budget_unknown") and memory.get("phone_contact") and policy["require_phone_for_hot"])
-                    or
-                    (base_hot and not policy["require_phone_for_hot"])
-                ):
-                    new_status = "hot"
-                elif base_hot:
-                    new_status = "warm"
-                else:
-                    new_status = "cold"
+            if (
+                (filled == required_fields_count and memory.get("phone_contact") and policy["require_phone_for_hot"])
+                or
+                (base_hot and memory.get("budget_unknown") and memory.get("phone_contact") and policy["require_phone_for_hot"])
+                or
+                (base_hot and not policy["require_phone_for_hot"])
+            ):
+                new_status = "hot"
+            elif base_hot:
+                new_status = "warm"
+            else:
+                new_status = "cold"
 
 
         # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
@@ -751,22 +787,14 @@ RESPONDE SIEMPRE EN JSON:
         if channel == "whatsapp":
 
             respuesta_texto = ai_response.get("answer", "")
-
-            if SEND_WHATSAPP_MESSAGES and WHATCRM_INSTANCE and WHATCRM_TOKEN:
-            
-                tiempo_espera = min(max(len(respuesta_texto) / 50, 2), 5)
-            
-                print(f"Esperando {tiempo_espera} segundos antes de responder por WhatsApp...")
-                time.sleep(tiempo_espera)
-            
-                enviar_respuesta_whatcrm(
-                    WHATCRM_INSTANCE,
-                    WHATCRM_TOKEN,
-                    user_id,
-                    respuesta_texto
-                )
-            else:
-                print("Modo desarrollo: mensaje NO enviado a WhatsApp.")
+        
+            responder_whatsapp(
+                respuesta_texto,
+                user_id,
+                SEND_WHATSAPP_MESSAGES,
+                WHATCRM_INSTANCE,
+                WHATCRM_TOKEN
+            )
         
             debug_response = {
                 "status": "sent"

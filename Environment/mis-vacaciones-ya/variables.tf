@@ -31,12 +31,6 @@ variable "bitrix_webhook_url" {
   
 }
 
-variable "business_type" {
-    description = "Tipo de negocio"
-    type = string
-    
-}
-
 variable "client_name" {
     description = "Nombre del cliente o empresa"
     type = string
@@ -65,4 +59,9 @@ variable "send_whatsapp_messages" {
     description = "Habilitar el envío de mensajes de WhatsApp"
     type = bool
     default = true
+}
+
+variable "super_admin_id" {
+    description = "ID del super administrador"
+    type = string
 }

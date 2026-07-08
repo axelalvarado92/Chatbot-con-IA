@@ -39,8 +39,11 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
   statement {
     sid    = "s3Access"
     effect = "Allow"
-    actions = ["s3:GetObject"]
-    resources = ["${var.bucket_arn}/*"]
+    actions = ["s3:GetObject", "s3:ListBucket"]
+    resources = [
+            var.bucket_arn,
+          "${var.bucket_arn}/*"
+        ]
   }
 
   statement {

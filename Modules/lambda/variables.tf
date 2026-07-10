@@ -75,3 +75,9 @@ variable "assistant_table_arn" {
     description = "The ARN of the DynamoDB table for assistant config"
     type        = string
 }
+
+variable "assets_bucket_arn" {
+    description = "Arn del bucket s3"
+    type = string
+  
+}

@@ -42,6 +42,7 @@ module "chat_ia" {
     layers = [aws_lambda_layer_version.openai_layer.arn]
 
     audit_bucket_arn = aws_s3_bucket.audit.arn
+    assets_bucket_arn = module.s3.bucket_arn
     
     memory_size = 256
     timeout = 30

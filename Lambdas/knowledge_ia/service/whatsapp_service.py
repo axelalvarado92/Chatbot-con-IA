@@ -3,7 +3,13 @@ import time
 import json
 
 import time
-from service.config_service import guardar_configuracion
+from service.config_service import (
+    guardar_configuracion
+)
+
+from service.business_service import (
+    guardar_business_config
+)
 
 def responder_whatsapp(
     texto,
@@ -56,7 +62,7 @@ def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
     print(f"URL utilizada: {url}")
     print(f"WhatCRM response: {res.status_code} - {res.text}")
 
-def procesar_comando_admin (
+def procesar_comando_admin(
     comando,
     user_id,
     config,
@@ -65,6 +71,8 @@ def procesar_comando_admin (
     send_messages,
     instance,
     token,
+    bucket_name,
+    business_file
 ):
         
     comando = comando.strip().lower()
@@ -175,7 +183,7 @@ def procesar_comando_admin (
 
     elif comando == "#bot horario":
 
-        business = business_config.get("business", {})
+        business = business_config
         horario = business.get("working_hours", {})
     
         dias = [
@@ -188,22 +196,83 @@ def procesar_comando_admin (
             ("sunday", "Domingo")
         ]
     
+        estado = (
+            "🟢 Activado"
+            if horario.get("enabled", False)
+            else "🔴 Desactivado"
+        )
+    
         respuesta = (
             "🕒 Horario configurado\n\n"
+            f"Estado: {estado}\n"
             f"🌍 Zona horaria: {business.get('timezone', 'UTC')}\n\n"
         )
     
         for clave, nombre in dias:
-    
+
             h = horario.get(clave)
-    
-            if h:
+        
+            if h is None:
+                respuesta += f"{nombre}: Cerrado\n"
+            else:
                 respuesta += (
                     f"{nombre}: "
                     f"{h['start']} - {h['end']}\n"
                 )
-            else:
-                respuesta += f"{nombre}: Cerrado\n"
+    
+        responder_whatsapp(
+            respuesta,
+            user_id,
+            send_messages,
+            instance,
+            token
+        )
+    
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "answer": respuesta
+            })
+        }
+
+    elif comando == "#bot horario on":
+
+        business_config["working_hours"]["enabled"] = True
+    
+        guardar_business_config(
+            bucket_name,
+            business_file,
+            business_config
+        )
+    
+        respuesta = "🕒 Control de horario ACTIVADO ✅"
+    
+        responder_whatsapp(
+            respuesta,
+            user_id,
+            send_messages,
+            instance,
+            token
+        )
+    
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "answer": respuesta
+            })
+        }
+
+    elif comando == "#bot horario off":
+
+        business_config["working_hours"]["enabled"] = False
+    
+        guardar_business_config(
+            bucket_name,
+            business_file,
+            business_config
+        )
+    
+        respuesta = "🕒 Control de horario DESACTIVADO ⛔"
     
         responder_whatsapp(
             respuesta,

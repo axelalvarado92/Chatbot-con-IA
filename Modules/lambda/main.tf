@@ -39,7 +39,10 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
   statement {
     sid    = "s3Access"
     effect = "Allow"
-    actions = ["s3:GetObject", "s3:ListBucket"]
+    actions = [
+       "s3:GetObject", 
+       "s3:ListBucket",
+       ]
     resources = [
             var.bucket_arn,
           "${var.bucket_arn}/*"
@@ -66,7 +69,8 @@ data "aws_iam_policy_document" "lambda_policy_doc" {
   ]
 
   resources = [
-     "${var.audit_bucket_arn}/*"
+     "${var.audit_bucket_arn}/*",
+     "${var.assets_bucket_arn}/*"
   ]
 }
 }

@@ -275,10 +275,6 @@ def lambda_handler(event, context):
         elif not memory.get("user_type"):
             memory["user_type"] = "lead"        
 
-        if channel == "whatsapp":
-            numero_limpio = user_id.split('@')[0] if '@' in user_id else user_id
-            memory["phone_contact"] = numero_limpio
-
         pais_det = detectar_pais(user_question)
         if pais_det != "No definido":
             memory["country"] = pais_det
@@ -332,6 +328,8 @@ def lambda_handler(event, context):
                 config=config,
                 config_table=config_table,
                 business_config=business_config,
+                bucket_name=BUCKET_NAME,
+                business_file=BUSINESS_FILE,
                 send_messages=SEND_WHATSAPP_MESSAGES,
                 instance=WHATCRM_INSTANCE,
                 token=WHATCRM_TOKEN,
@@ -476,10 +474,6 @@ RESPONDE SIEMPRE EN JSON:
 
         if "phone_contact" not in campos_memoria:
             campos_memoria.append("phone_contact")
-
-        if channel == "whatsapp" and not memory.get("phone_contact"):
-           memory["phone_contact"] = user_id.split('@')[0]        
-    
         
         for key in campos_memoria:
             val = extracted.get(key)

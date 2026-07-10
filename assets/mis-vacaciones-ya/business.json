@@ -13,24 +13,24 @@
   "working_hours": {
     "enabled": false,
     "monday": {
-      "start": "09:00",
-      "end": "18:00"
+      "start": "18:00",
+      "end": "8:00"
     },
     "tuesday": {
-      "start": "09:00",
-      "end": "18:00"
+      "start": "18:00",
+      "end": "8:00"
     },
     "wednesday": {
-      "start": "09:00",
-      "end": "18:00"
+      "start": "18:00",
+      "end": "8:00"
     },
     "thursday": {
-      "start": "09:00",
-      "end": "18:00"
+      "start": "18:00",
+      "end": "8:00"
     },
     "friday": {
-      "start": "09:00",
-      "end": "18:00"
+      "start": "18:00",
+      "end": "8:00"
     },
     "saturday": null,
     "sunday": null

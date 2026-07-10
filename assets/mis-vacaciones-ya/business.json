@@ -2,14 +2,39 @@
   "business_type": "travel",
   "company_name": "Mis Vacaciones Ya",
   "assistant_name": "María",
-
+  "admin_phone": ["34621680256", "5493544569602"],
   "required_fields": [
     "destination",
     "people",
     "date",
     "budget"
   ],
-
+  "timezone": "Europe/Madrid",
+  "working_hours": {
+    "enabled": false,
+    "monday": {
+      "start": "09:00",
+      "end": "18:00"
+    },
+    "tuesday": {
+      "start": "09:00",
+      "end": "18:00"
+    },
+    "wednesday": {
+      "start": "09:00",
+      "end": "18:00"
+    },
+    "thursday": {
+      "start": "09:00",
+      "end": "18:00"
+    },
+    "friday": {
+      "start": "09:00",
+      "end": "18:00"
+    },
+    "saturday": null,
+    "sunday": null
+  },
   "channels": {
     "web": {
       "ask_phone": true,
@@ -22,7 +47,6 @@
       "auto_hot": true
     }
   },
-
   "crm": {
     "enabled": true,
     "provider": "bitrix24"

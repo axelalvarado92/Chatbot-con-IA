@@ -60,7 +60,6 @@ module "chat_ia" {
         DEBUG_WHATSAPP         = var.debug_whatsapp
         SEND_WHATSAPP_MESSAGES = var.send_whatsapp_messages
         CONFIG_TABLE_NAME      = module.assistant-config.assistant_table_name
-        SUPER_ADMIN_ID         = var.super_admin_id
 
     }
 }

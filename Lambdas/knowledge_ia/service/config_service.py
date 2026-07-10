@@ -1,7 +1,7 @@
 import boto3
 import os
 
-SUPER_ADMIN_ID = os.environ.get("SUPER_ADMIN_ID")
+
 
 def puede_responder(memory, config, channel):
 
@@ -30,7 +30,10 @@ def obtener_configuracion(config_table):
 
     return response.get("Item")
 
-def obtener_o_crear_configuracion(config_table):
+def obtener_o_crear_configuracion(
+    config_table,
+    business_config
+   ):
 
     config = obtener_configuracion(config_table)
 
@@ -44,14 +47,13 @@ def obtener_o_crear_configuracion(config_table):
         "bot_enabled": True,
         "maintenance_mode": False,
     
-        # Horarios
-        "working_hours_enabled": False,
-        "working_start": "09:00",
-        "working_end": "18:00",
-        "timezone": "America/Argentina/Buenos_Aires",
-    
         # Administración
-        "admin_phone": None
+        "admin_phone": business_config.get("admin_phone"),
+
+        "business_timezone": business_config.get(
+            "timezone",
+            "UTC"
+        )
     }
     
     print("Configuración global creada.")
@@ -68,12 +70,11 @@ def guardar_configuracion(config_table, config):
 
 def es_administrador(user_id, config):
 
-    if SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID:
-        return True
+    numero = user_id.split("@")[0]
 
-    admin_id = config.get("admin_id")
+    admin = config.get("admin_phone")
 
-    if admin_id and user_id == admin_id:
+    if admin and numero == admin:
         return True
 
     return False

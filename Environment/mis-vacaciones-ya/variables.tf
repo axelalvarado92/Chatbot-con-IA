@@ -61,7 +61,3 @@ variable "send_whatsapp_messages" {
     default = true
 }
 
-variable "super_admin_id" {
-    description = "ID del super administrador"
-    type = string
-}

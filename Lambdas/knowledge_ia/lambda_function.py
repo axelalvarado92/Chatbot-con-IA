@@ -36,7 +36,8 @@ from service.memory_service import (
 
 from service.whatsapp_service import (
     enviar_respuesta_whatcrm,
-    responder_whatsapp
+    responder_whatsapp,
+    procesar_comando_admin
 )
 
 from service.prompt_service import (
@@ -45,6 +46,10 @@ from service.prompt_service import (
 )
 
 from service.business_service import cargar_business_config
+
+from service.business_hours_service import (
+    esta_en_horario_laboral
+)
 
 def guardar_auditoria(
     bucket,
@@ -123,11 +128,11 @@ def lambda_handler(event, context):
         DEBUG_WHATSAPP         = os.environ.get("DEBUG_WHATSAPP", "false").lower() == "true"
         SEND_WHATSAPP_MESSAGES = os.environ.get("SEND_WHATSAPP_MESSAGES", "true").lower() == "true"
         CONFIG_TABLE_NAME      = os.environ.get("CONFIG_TABLE_NAME")
-        SUPER_ADMIN_ID         = os.getenv("SUPER_ADMIN_ID")
+
         
 
         try:
-
+            
             agency_knowledge = obtener_knowledge(
                 BUCKET_NAME,
                 KNOWLEDGE_FILE
@@ -142,6 +147,16 @@ def lambda_handler(event, context):
                 BUCKET_NAME,
                 BUSINESS_FILE
             )
+
+            table = dynamodb.Table(TABLE_NAME)
+            
+            config_table = dynamodb.Table(CONFIG_TABLE_NAME)
+            
+            config = obtener_o_crear_configuracion(
+                    config_table,
+                    business_config
+                )
+            
             # ======================================
             # Parseo del body
             # ======================================
@@ -149,6 +164,7 @@ def lambda_handler(event, context):
             body = json.loads(raw_body)
         
             user_id = None
+            chat_id = None
             user_question = None
             channel = None
         
@@ -162,6 +178,7 @@ def lambda_handler(event, context):
                 channel = "web"
                 policy = business_config["channels"]["web"]
                 user_id = body.get("user_id")
+                chat_id = user_id
                 user_question = body.get("question")
         
             # ======================================
@@ -194,10 +211,12 @@ def lambda_handler(event, context):
                 channel = "whatsapp"
                 policy = business_config["channels"]["whatsapp"]
                 
+                chat_id = mensaje.get("chatId")
+
                 if es_admin_command:
                     user_id = mensaje.get("from")
                 else:
-                    user_id = mensaje.get("chatId")
+                    user_id = chat_id
                 
                 user_question = mensaje.get("body")
         
@@ -227,6 +246,7 @@ def lambda_handler(event, context):
         
             print(f"Canal: {channel}")
             print(f"Usuario: {user_id}")
+            print(f"Chat: {chat_id}")
             print(f"Pregunta: {user_question}")
         
         except Exception as parse_err:
@@ -242,10 +262,7 @@ def lambda_handler(event, context):
             }
 
         # 1. Recuperar Memoria
-        table = dynamodb.Table(TABLE_NAME)
-        config_table = dynamodb.Table(CONFIG_TABLE_NAME)
-        config = obtener_o_crear_configuracion(config_table)
-
+        
         memory = obtener_memoria(
             table,
             user_id
@@ -309,93 +326,21 @@ def lambda_handler(event, context):
             and es_comando_admin(user_question)
         ):
 
-            comando = user_question.strip().lower()
+            respuesta = procesar_comando_admin(
+                comando=user_question,
+                user_id=user_id,
+                config=config,
+                config_table=config_table,
+                business_config=business_config,
+                send_messages=SEND_WHATSAPP_MESSAGES,
+                instance=WHATCRM_INSTANCE,
+                token=WHATCRM_TOKEN,
 
-            if (
-                comando != "#bot registrar"
-                and not es_administrador(user_id, config)
-            ):
-                print("ADMIN 3 - Sin permisos")
-                return {
-                    "statusCode": 403,
-                    "body": json.dumps({
-                        "answer": "No tienes permisos para ejecutar este comando."
-                    })
-                }
-
-            if comando == "#bot registrar":
-
-                if config.get("admin_phone"):
-                    return {
-                        "statusCode": 200,
-                        "body": json.dumps({
-                            "answer": "Ya existe un administrador registrado."
-                        })
-                    }
+            )
             
-                numero_admin = user_id.split("@")[0] if "@" in user_id else user_id
+            if respuesta:
+                return respuesta
             
-                config["admin_phone"] = numero_admin
-            
-                guardar_configuracion(config_table, config)
-            
-                return {
-                    "statusCode": 200,
-                    "body": json.dumps({
-                        "answer": "✅ Administrador registrado correctamente."
-                    })
-                }
-        
-            if comando == "#bot status":
-
-                estado = "ACTIVO ✅" if config.get("bot_enabled", True) else "DESACTIVADO ⛔"
-            
-                admin = config.get("admin_phone") or "No registrado"
-            
-                respuesta = (
-                    f"🤖 Estado: {estado}\n"
-                    f"👤 Administrador: {admin}"
-                )
-            
-                responder_whatsapp(
-                    respuesta,
-                    user_id,
-                    SEND_WHATSAPP_MESSAGES,
-                    WHATCRM_INSTANCE,
-                    WHATCRM_TOKEN
-                )
-            
-                return {
-                    "statusCode": 200,
-                    "body": json.dumps({
-                        "answer": respuesta
-                    })
-                }
-            
-            elif comando == "#bot off":
-
-                config["bot_enabled"] = False
-                guardar_configuracion(config_table, config)
-        
-                return {
-                    "statusCode": 200,
-                    "body": json.dumps({
-                        "answer": "✅ Bot desactivado."
-                    })
-                }
-        
-            elif comando == "#bot on":
-        
-                config["bot_enabled"] = True
-                guardar_configuracion(config_table, config)
-        
-                return {
-                    "statusCode": 200,
-                    "body": json.dumps({
-                        "answer": "✅ Bot activado."
-                    })
-                }
-        
         if not puede_responder(memory, config, channel):
 
             print("Bot deshabilitado para esta conversación.")
@@ -404,6 +349,37 @@ def lambda_handler(event, context):
                 "statusCode": 200,
                 "body": json.dumps({
                     "status": "bot_disabled"
+                })
+            }
+        
+        # ======================================
+        # Validar horario laboral
+        # ======================================
+        
+        if (
+            channel == "whatsapp"
+            and not esta_en_horario_laboral(business_config)
+        ):
+        
+            business = business_config.get("business", {})
+
+            respuesta = business.get(
+                "outside_hours_message",
+                "🕒 En este momento estamos fuera de nuestro horario de atención."
+            )
+        
+            responder_whatsapp(
+                respuesta,
+                user_id,
+                SEND_WHATSAPP_MESSAGES,
+                WHATCRM_INSTANCE,
+                WHATCRM_TOKEN
+            )
+        
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "answer": respuesta
                 })
             }
         

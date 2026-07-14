@@ -22,21 +22,3 @@ def obtener_prompt(bucket, prompt_file):
 
     return _prompt_cache
 
-def obtener_knowledge(bucket, knowledge_file):
-
-    global _knowledge_cache
-
-    if _knowledge_cache is None:
-
-        response = s3.get_object(
-            Bucket=bucket,
-            Key=knowledge_file
-        )
-
-        _knowledge_cache = (
-            response["Body"]
-            .read()
-            .decode("utf-8")
-        )
-
-    return _knowledge_cache

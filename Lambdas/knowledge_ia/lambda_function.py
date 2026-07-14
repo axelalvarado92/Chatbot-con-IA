@@ -11,6 +11,14 @@ from decimal import Decimal
 from datetime import datetime
 import traceback
 
+from service.settings_service import (
+    cargar_settings
+)
+
+from service.request_service import (
+    parse_request
+)
+
 from service.helpers import (
     convert_decimals,
     extraer_telefono,
@@ -32,6 +40,15 @@ from service.config_service import (
 
 from service.memory_service import (
     obtener_memoria,
+    actualizar_campos_basicos,
+    sincronizar_memoria,
+    guardar_memoria
+)
+
+from service.memory_update_service import actualizar_memoria
+
+from service.audit_service import (
+    guardar_auditoria
 )
 
 from service.whatsapp_service import (
@@ -42,6 +59,9 @@ from service.whatsapp_service import (
 
 from service.prompt_service import (
     obtener_prompt,
+)
+
+from service.knowledge_service import (
     obtener_knowledge
 )
 
@@ -51,47 +71,7 @@ from service.business_hours_service import (
     esta_en_horario_laboral
 )
 
-def guardar_auditoria(
-    bucket,
-    user_id,
-    user_question,
-    ai_answer,
-    memory,
-    lead_status
-):
-    try:
-
-        timestamp = datetime.utcnow()
-
-        audit_record = {
-            "timestamp": timestamp.isoformat(),
-            "user_id": user_id,
-            "user_message": user_question,
-            "assistant_answer": ai_answer,
-            "lead_status": lead_status,
-            "budget_status": memory.get("budget_status"),
-            "memory_snapshot": memory
-        }
-
-        key = (
-            f"{timestamp.year}/"
-            f"{timestamp.month:02d}/"
-            f"{timestamp.day:02d}/"
-            f"{uuid.uuid4()}.json"
-        )
-
-        s3.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=json.dumps(
-                convert_decimals(audit_record),
-                ensure_ascii=False
-            ),
-            ContentType="application/json"
-        )
-
-    except Exception as e:
-        print(f"Error guardando auditoría: {e}")
+from service.bitrix_service import enviar_lead_bitrix
 
 # --- CLIENTES ---
 s3 = boto3.client("s3")
@@ -133,20 +113,16 @@ def lambda_handler(event, context):
 
         try:
             
-            agency_knowledge = obtener_knowledge(
+            settings = cargar_settings(
                 BUCKET_NAME,
-                KNOWLEDGE_FILE
-            )
-            
-            prompt_config = obtener_prompt(
-                BUCKET_NAME,
-                PROMPT_FILE
-            )
-    
-            business_config = cargar_business_config(
-                BUCKET_NAME,
+                PROMPT_FILE,
+                KNOWLEDGE_FILE,
                 BUSINESS_FILE
             )
+            
+            agency_knowledge = settings["knowledge"]
+            prompt_config = settings["prompt"]
+            business_config = settings["business"]
 
             table = dynamodb.Table(TABLE_NAME)
             
@@ -162,88 +138,47 @@ def lambda_handler(event, context):
             # ======================================
             raw_body = event.get("body", "{}")
             body = json.loads(raw_body)
+
+            # ======================================
+            # Eventos ACK de WhatCRM
+            # ======================================
+            
+            if "acks" in body:
+            
+                print("Evento ACK ignorado")
+            
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "status": "ack_ignored"
+                    })
+                }
         
             user_id = None
             chat_id = None
             user_question = None
             channel = None
         
-            # ======================================
-            # WEB
-            # ======================================
-            if "question" in body:
-        
-                print("Canal detectado: WEB")
-        
-                channel = "web"
-                policy = business_config["channels"]["web"]
-                user_id = body.get("user_id")
-                chat_id = user_id
-                user_question = body.get("question")
-        
-            # ======================================
-            # WHATSAPP
-            # ======================================
-            elif "messages" in body:
-        
-                print("Canal detectado: WhatsApp")
-        
-                messages = body.get("messages", [])
-        
-                if len(messages) == 0:
-                    raise Exception("No hay mensajes")
-        
-                mensaje = messages[0]
-
-                # Detectar comandos administrativos antes de ignorar mensajes propios
-                es_admin_command = es_comando_admin(
-                    mensaje.get("body", "")
-                )
-        
-                # Ignorar mensajes enviados por el bot
-                if mensaje.get("fromMe") and not es_admin_command:
-        
-                    return {
-                        "statusCode": 200,
-                        "body": json.dumps({"ok": True})
-                    }
-        
-                channel = "whatsapp"
-                policy = business_config["channels"]["whatsapp"]
-                
-                chat_id = mensaje.get("chatId")
-
-                if es_admin_command:
-                    user_id = mensaje.get("from")
-                else:
-                    user_id = chat_id
-                
-                user_question = mensaje.get("body")
-        
-            # ======================================
-            # Formato desconocido
-            # ======================================
-            else:
-        
+            request = parse_request(
+                body,
+                business_config
+            )
+            
+            if request is None:
+            
                 return {
-                    "statusCode": 400,
+                    "statusCode": 200,
                     "body": json.dumps({
-                        "error": "Formato de request no soportado"
+                        "ok": True
                     })
                 }
-        
-            # ======================================
-            # Validaciones
-            # ======================================
-            if not user_id or not user_question:
-        
-                return {
-                    "statusCode": 400,
-                    "body": json.dumps({
-                        "error": "Faltan datos"
-                    })
-                }
-        
+            
+            channel = request["channel"]
+            policy = request["policy"]
+            user_id = request["user_id"]
+            chat_id = request["chat_id"]
+            user_question = request["question"]
+            
             print(f"Canal: {channel}")
             print(f"Usuario: {user_id}")
             print(f"Chat: {chat_id}")
@@ -316,6 +251,9 @@ def lambda_handler(event, context):
         # ======================================
         # Comandos de administración
         # ======================================
+
+        print("Pregunta:", repr(user_question))
+        print("Es comando:", es_comando_admin(user_question))
 
         if (
             channel == "whatsapp"
@@ -468,103 +406,16 @@ RESPONDE SIEMPRE EN JSON:
             user_question
         )
 
-        # 3. Sincronizar Memoria
-        # phone_contact incluido en la sincronización
-        campos_memoria = lead_fields.copy()
-
-        if "phone_contact" not in campos_memoria:
-            campos_memoria.append("phone_contact")
-        
-        for key in campos_memoria:
-            val = extracted.get(key)
-        
-            if val and str(val).lower() not in ["null", "none"]:
-        
-                if key == "phone_contact" and channel == "whatsapp":
-                    continue
-        
-                memory[key] = val
-
-        if (
-            memory.get("destination")
-            and memory.get("people")
-            and memory.get("date")
-            and memory.get("budget_unknown")
-            and policy["ask_phone"]
-            and not memory.get("phone_contact")
-        ):
-            ai_response["answer"] = (
-                "Entiendo! Si aún no cuentas con un presupuesto definido, "
-                "uno de nuestros asesores puede orientarte sobre costos y opciones disponibles. "
-                "Por favor indícanos un número de teléfono o un correo electrónico y nos pondremos en contacto contigo lo antes posible."
-            )
-        
-        if (
-            memory.get("budget_unknown")
-            and memory.get("phone_contact")
-        ):
-        
-            ai_response["answer"] = (
-                "Perfecto. Hemos recibido tu número de contacto. "
-                "Uno de nuestros asesores se comunicará contigo lo antes posible para ayudarte a evaluar opciones y presupuesto para tu viaje."
-            )        
-
-        texto_normalizado = user_question.lower().strip()
-
-        if (
-            memory.get("destination")
-            and memory.get("people")
-            and memory.get("date")
-            and not memory.get("budget")
-            and texto_normalizado in [
-                "no se",
-                "no sé",
-                "nose",
-                "ni idea",
-                "desconozco",
-                "no lo se",
-                "no lo sé"
-            ]
-        ):
-            
-            memory["budget_unknown"] = True        
-
-        
-        memory["budget_status"] = calcular_estado_presupuesto(
-            memory.get("destination"),
-            memory.get("people"),
-            memory.get("budget")
+        # 3. Actualizar Memoria
+        memory = actualizar_memoria(
+            memory=memory,
+            extracted=extracted,
+            user_question=user_question,
+            ai_response=ai_response,
+            lead_fields=lead_fields,
+            policy=policy,
+            channel=channel
         )
-
-        print("DESTINO:", memory.get("destination"))
-        print("PERSONAS:", memory.get("people"))
-        print("PRESUPUESTO:", memory.get("budget"))
-        print("BUDGET STATUS:", memory.get("budget_status"))
-        print("BUDGET UNKNOWN:", memory.get("budget_unknown"))
-
-        if (
-            memory["budget_status"] == "low"
-            and memory.get("destination")
-            and memory.get("people")
-            and memory.get("date")
-            and policy["ask_phone"]
-            and not memory.get("phone_contact")
-        ):
-
-           ai_response["answer"] = (
-               "Gracias por compartir los datos de tu viaje. "
-               "Para el destino y la cantidad de viajeros indicados, el presupuesto podría resultar ajustado según las fechas y la disponibilidad. "
-               "Si lo deseas, déjanos un número de contacto o un correo electrónico y un asesor se comunicará contigo lo antes posible para ayudarte a encontrar mejores opciones."
-            )
-           
-        elif (
-            memory["budget_status"] == "low"
-            and memory.get("phone_contact")
-        ):
-            ai_response["answer"] = (
-                "Perfecto. Hemos recibido tu número de contacto. "
-                "Un asesor se comunicará contigo lo antes posible."
-            )   
 
         # 4. Evaluación de Lead
         filled = sum(
@@ -596,158 +447,35 @@ RESPONDE SIEMPRE EN JSON:
                 new_status = "cold"
 
 
-        # 5. CREAR LEAD EN BITRIX (solo una vez cuando llega a HOT)
-        if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
-
-            mapa_destinos = {"españa": "1367",
-                            "roma": "1347",
-                            "italia": "1347",
-                            "argentina": "1207",
-                            "china": "1765",
-                            "japon": "1081",
-                            "francia": "1817",
-                            "grecia": "1977",
-                            "egipto": "1507",
-                            "turquia": "1687",
-                            "corea del sur": "1083",
-                            "dubai": "1477",
-                            "marruecos": "1377",
-                            "india": "1085"
-                            }
-            
-            mapa_origenes = {"argentina": "263", "españa": "261"}
-
-            dest_mem = str(memory.get("destination", "")).lower().strip()
-            orig_mem = str(memory.get("country", "")).lower().strip()
-
-            id_destino = mapa_destinos.get(dest_mem, "1213")
-            id_origen = mapa_origenes.get(orig_mem, "")
-
-            temp_history = memory.get("history", []) + [
-                {"user": user_question, "assistant": ai_response.get("answer")}
-            ]
-            charla_texto = formatear_historial(
-                temp_history,
-                prompt_config["assistant_name"]
-            )
-
-            fields = {
-                "TITLE": f"{prompt_config['company_name']} - {user_id}",
-                "OPPORTUNITY": memory.get("budget"),
-                "UF_CRM_1729943385206": id_destino,
-                "UF_CRM_1729072409973": id_origen,
-                "DESCRIPTION": charla_texto,
-                "COMMENTS": charla_texto
-            }
-
-            if memory.get("budget_unknown"):
-                fields["COMMENTS"] += "\n\nPresupuesto: NO DEFINIDO POR EL CLIENTE"
-
-            if memory.get("phone_contact"):
-                fields["PHONE"] = [{
-                    "VALUE": memory.get("phone_contact"),
-                    "VALUE_TYPE": "WORK"
-                }]
-
-            bitrix_payload = {
-                "fields": fields
-            }
-
-            try:
-                res = requests.post(f"{BITRIX_WEBHOOK}crm.lead.add.json", json=bitrix_payload, timeout=15)
-                new_id = res.json().get("result")
-
-                if new_id:
-                    memory["lead_sent"] = True
-                    memory["lead_id"] = new_id
-                    memory["budget_unknown"] = False
-
-                    base_url = BITRIX_WEBHOOK.split('/crm.lead.add.json')[0]
-                    requests.post(
-                        f"{base_url}/crm.timeline.comment.add.json",
-                        json={
-                            "fields": {
-                                "ENTITY_ID": new_id,
-                                "ENTITY_TYPE": "lead",
-                                "COMMENT": charla_texto
-                            }
-                        }
-                    )
-
-            except Exception as b_err:
-                print(f"Error en comunicación con Bitrix: {b_err}")
-
-        # 6. UPDATE SI EL LEAD YA EXISTE
-        elif new_status == "hot" and memory.get("lead_id") and BITRIX_WEBHOOK:
-
-            lead_id = memory.get("lead_id")
-
-            temp_history = memory.get("history", []) + [
-                {"user": user_question, "assistant": ai_response.get("answer")}
-            ]
-            charla_texto = formatear_historial(
-                temp_history,
-                prompt_config["assistant_name"]
-            )
-            
-
-            try:
-                requests.post(
-                    f"{BITRIX_WEBHOOK}crm.lead.update.json",
-                    json={
-                        "id": lead_id,
-                       "fields": {
-                            "OPPORTUNITY": memory.get("budget"),
-                            "PHONE": [
-                                {
-                                    "VALUE": memory.get("phone_contact"),
-                                    "VALUE_TYPE": "WORK"
-                                }
-                            ]
-                        }
-                    },
-                    timeout=10
-                )
-
-                base_url = BITRIX_WEBHOOK.split('/crm.lead.add.json')[0]
-                requests.post(
-                    f"{base_url}/crm.timeline.comment.add.json",
-                    json={
-                        "fields": {
-                            "ENTITY_ID": lead_id,
-                            "ENTITY_TYPE": "lead",
-                            "COMMENT": f"NUEVO MENSAJE:\n{user_question}\n\nRespuesta IA:\n{ai_response.get('answer')}"
-                        }
-                    },
-                    timeout=10
-                )
-
-            except Exception as e:
-                print(f"Error actualizando lead: {e}")
-
-
-       # 7. Guardar Memoria
-        memory["lead_status"] = new_status
-        history = memory.get("history", [])
+        # 5. CREAR LEAD EN BITRIX
+        enviar_lead_bitrix(
+            memory=memory,
+            user_id=user_id,
+            user_question=user_question,
+            ai_response=ai_response,
+            new_status=new_status,
+            prompt_config=prompt_config,
+            BITRIX_WEBHOOK=BITRIX_WEBHOOK
+        )
         
-        respuesta = ai_response.get("answer")
-
-        history.append({
-            "user": user_question,
-            "assistant": respuesta if respuesta else ""
-        })
-        memory["history"] = history[-20:]
-
-        table.put_item(Item=convert_decimals(memory))
+        # 6. Guardar Memoria
+        guardar_memoria(
+            table=table,
+            memory=memory,
+            user_question=user_question,
+            ai_response=ai_response,
+            new_status=new_status
+         )
 
         if AUDIT_BUCKET:
+
             guardar_auditoria(
-                AUDIT_BUCKET,
-                user_id,
-                user_question,
-                ai_response.get("answer"),
-                memory,
-                new_status
+                bucket=AUDIT_BUCKET,
+                user_id=user_id,
+                user_question=user_question,
+                ai_answer=ai_response.get("answer"),
+                memory=memory,
+                lead_status=new_status
             )
 
         # ======================================

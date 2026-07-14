@@ -1,8 +1,6 @@
 import boto3
 import os
 
-
-
 def puede_responder(memory, config, channel):
 
     # La web siempre responde

@@ -1,6 +1,6 @@
 import json
 
-from service.config_service import es_comando_admin
+from service.bot_control_service import es_comando_admin
 
 
 def parse_request(body, business_config):

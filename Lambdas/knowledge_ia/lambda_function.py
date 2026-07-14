@@ -11,8 +11,20 @@ from decimal import Decimal
 from datetime import datetime
 import traceback
 
-from service.settings_service import (
+from service.app_config_service import (
     cargar_settings
+)
+
+from service.user_type_service import (
+    validar_tipo_usuario
+)
+
+from service.ai_service import (
+    obtener_respuesta_ai,
+)
+
+from service.user_context_service import (
+    preparar_contexto_usuario
 )
 
 from service.request_service import (
@@ -32,9 +44,18 @@ from service.helpers import (
 from service.config_service import (
     obtener_o_crear_configuracion,
     guardar_configuracion,
-    es_administrador,
-    puede_responder,
     obtener_configuracion,
+    
+)
+
+from service.lead_service import (
+    calcular_estado_lead,
+    obtener_campos_faltantes
+)
+
+from service.bot_control_service import (
+    puede_responder,
+    es_administrador,
     es_comando_admin
 )
 
@@ -198,53 +219,31 @@ def lambda_handler(event, context):
 
         # 1. Recuperar Memoria
         
-        memory = obtener_memoria(
-            table,
-            user_id
+        memory = preparar_contexto_usuario(
+            table=table,
+            user_id=user_id,
+            user_question=user_question
         )
-        
-        nuevo_tipo = detectar_tipo_usuario(user_question)
-
-        if nuevo_tipo != "lead":
-            memory["user_type"] = nuevo_tipo
-        elif not memory.get("user_type"):
-            memory["user_type"] = "lead"        
-
-        pais_det = detectar_pais(user_question)
-        if pais_det != "No definido":
-            memory["country"] = pais_det
-
-        safe_memory = convert_decimals(memory)
-
-        lead_fields = prompt_config.get(
-            "lead_fields",
-            ["destination", "people", "date", "budget"]
+       
+        # 2. Obtener campos faltantes
+        lead_fields, faltantes = obtener_campos_faltantes(
+            memory,
+            prompt_config
         )
-
-        required_fields_count = len(lead_fields)
-
-        faltantes = []
-
-        for campo in lead_fields:
-            if not memory.get(campo):
-                faltantes.append(campo)
         
         faltantes_texto = ", ".join(faltantes)
 
-        # 🚫 FILTRO DE TIPO DE USUARIO
-        if memory.get("user_type") == "proveedor":
+        # FILTRO DE TIPO DE USUARIO
+        mensaje = validar_tipo_usuario(
+            memory,
+            channel
+        )
+        
+        if mensaje:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "answer": "¡Hola! Para propuestas comerciales o colaboraciones, podés escribirnos por nuestros canales oficiales y un responsable se pondrá en contacto."
-                })
-            }
-
-        if memory.get("user_type") == "cliente" and channel == "web":
-            return {
-                "statusCode": 200,
-                "body": json.dumps({
-                    "answer": "¡Qué bueno tenerte de nuevo! Uno de nuestros asesores se contactará contigo..."
+                    "answer": mensaje
                 })
             }
         
@@ -318,93 +317,17 @@ def lambda_handler(event, context):
                     "answer": respuesta
                 })
             }
-        
-        # 2. OpenAI
-        system_prompt = f"""
-CONTEXTO AGENCIA: {agency_knowledge}
-Eres {prompt_config['assistant_name']},
-asesora de viajes de {prompt_config['company_name']}.
-
-MEMORIA CLIENTE:
-{json.dumps(safe_memory)}
-
-DATOS YA OBTENIDOS:
-Destino: {memory.get("destination")}
-Viajeros: {memory.get("people")}
-Fecha: {memory.get("date")}
-Presupuesto: {memory.get("budget")}
-
-DATOS FALTANTES:
-{faltantes_texto}
-
-ESTADO PRESUPUESTO:
-{memory.get("budget_status")}
-
-TU MISIÓN:
-{chr(10).join(prompt_config['mission'])}
-
-REGLAS DE RECOMENDACIÓN:
-{chr(10).join(prompt_config['recommendation_rules'])}
-
-REGLAS DE EXTRACCIÓN DE DATOS:
-{chr(10).join(prompt_config['extraction_rules'])}
-
-REGLAS DE ORO:
-{chr(10).join(prompt_config['golden_rules'])}
-
-LÓGICA DE CIERRE:
-{chr(10).join(prompt_config['closing_logic'])}
-
-RESPONDE SIEMPRE EN JSON:
-{{
-  "answer": "tu respuesta",
-  "extracted_data": {{
-    "destination": "valor o null",
-    "people": "valor o null",
-    "date": "valor o null",
-    "budget": "valor o null",
-    "phone_contact": "valor o null"
-  }}
-}}
-"""
-
-        messages_to_send = [{"role": "system", "content": system_prompt}]
-
-        for msg in memory.get("history", [])[-6:]:
-
-            if msg.get("user"):
-                messages_to_send.append({
-                    "role": "user",
-                    "content": msg["user"]
-                })
-        
-            if msg.get("assistant"):
-                messages_to_send.append({
-                    "role": "assistant",
-                    "content": msg["assistant"]
-                })
-
-        messages_to_send.append({"role": "user", "content": user_question})
-
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages_to_send,
-            response_format={"type": "json_object"}
+        # 2. OpenAi
+        ai_response = obtener_respuesta_ai(
+            client=client,
+            prompt_config=prompt_config,
+            agency_knowledge=agency_knowledge,
+            memory=memory,
+            user_question=user_question,
+            faltantes_texto=faltantes_texto
         )
 
-        ai_response = json.loads(completion.choices[0].message.content)
-        print("========== RAW OPENAI ==========")
-        print(completion.choices[0].message.content)
-        
-        print("========== PARSED ==========")
-        print(ai_response)
-        
         extracted = ai_response.get("extracted_data", {})
-
-        extracted = normalizar_extracciones(
-            extracted,
-            user_question
-        )
 
         # 3. Actualizar Memoria
         memory = actualizar_memoria(
@@ -418,33 +341,12 @@ RESPONDE SIEMPRE EN JSON:
         )
 
         # 4. Evaluación de Lead
-        filled = sum(
-            1
-            for k in lead_fields
-            if memory.get(k)
+        new_status = calcular_estado_lead(
+            memory=memory,
+            lead_fields=lead_fields,
+            channel=channel,
+            policy=policy
         )
-        budget_status = memory.get("budget_status")
-
-        base_hot = (
-            memory.get("destination")
-            and memory.get("people")
-            and memory.get("date")
-        )
-        if policy["auto_hot"]:
-            new_status = "hot" if base_hot else "warm"
-        else:
-            if (
-                (filled == required_fields_count and memory.get("phone_contact") and policy["require_phone_for_hot"])
-                or
-                (base_hot and memory.get("budget_unknown") and memory.get("phone_contact") and policy["require_phone_for_hot"])
-                or
-                (base_hot and not policy["require_phone_for_hot"])
-            ):
-                new_status = "hot"
-            elif base_hot:
-                new_status = "warm"
-            else:
-                new_status = "cold"
 
 
         # 5. CREAR LEAD EN BITRIX

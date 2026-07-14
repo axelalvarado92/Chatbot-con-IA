@@ -115,6 +115,11 @@ CHANNEL_POLICY = {
 def lambda_handler(event, context):
     print("RAW EVENT:", json.dumps(event, default=str), flush=True)
     sys.stdout.flush()            
+    
+    # =====================================================
+    # 0. Inicialización de la aplicación
+    # =====================================================
+    
     try:
         # 0. Configuración Inicial
         TABLE_NAME             = os.environ.get("TABLE_NAME")
@@ -154,16 +159,15 @@ def lambda_handler(event, context):
                     business_config
                 )
             
-            # ======================================
+            
+     # =====================================================
+     # 1. Recepción y validación de la solicitud
+     # =====================================================
             # Parseo del body
-            # ======================================
             raw_body = event.get("body", "{}")
             body = json.loads(raw_body)
 
-            # ======================================
             # Eventos ACK de WhatCRM
-            # ======================================
-            
             if "acks" in body:
             
                 print("Evento ACK ignorado")
@@ -216,16 +220,20 @@ def lambda_handler(event, context):
                     "error": str(parse_err)
                 })
             }
-
-        # 1. Recuperar Memoria
-        
+    
+    # =====================================================
+    # 2. Preparar contexto del usuario
+    # =====================================================
+        # Recuperar Memoria
         memory = preparar_contexto_usuario(
             table=table,
             user_id=user_id,
             user_question=user_question
         )
        
-        # 2. Obtener campos faltantes
+    # =====================================================
+    # 3. Analizar estado del lead
+    # =====================================================
         lead_fields, faltantes = obtener_campos_faltantes(
             memory,
             prompt_config
@@ -247,10 +255,10 @@ def lambda_handler(event, context):
                 })
             }
         
-        # ======================================
+    # =====================================================
+    # 4. Validaciones previas al procesamiento
+    # =====================================================
         # Comandos de administración
-        # ======================================
-
         print("Pregunta:", repr(user_question))
         print("Es comando:", es_comando_admin(user_question))
 
@@ -287,10 +295,7 @@ def lambda_handler(event, context):
                 })
             }
         
-        # ======================================
-        # Validar horario laboral
-        # ======================================
-        
+        # Validar horario laboral  
         if (
             channel == "whatsapp"
             and not esta_en_horario_laboral(business_config)
@@ -317,7 +322,10 @@ def lambda_handler(event, context):
                     "answer": respuesta
                 })
             }
-        # 2. OpenAi
+
+    # =====================================================
+    # 5. Generación de respuesta con IA
+    # =====================================================
         ai_response = obtener_respuesta_ai(
             client=client,
             prompt_config=prompt_config,
@@ -328,8 +336,11 @@ def lambda_handler(event, context):
         )
 
         extracted = ai_response.get("extracted_data", {})
-
-        # 3. Actualizar Memoria
+    
+    # =====================================================
+    # 6. Actualización del contexto del usuario
+    # =====================================================
+        # Actualizar Memoria
         memory = actualizar_memoria(
             memory=memory,
             extracted=extracted,
@@ -339,8 +350,11 @@ def lambda_handler(event, context):
             policy=policy,
             channel=channel
         )
-
-        # 4. Evaluación de Lead
+   
+    # =====================================================
+    # 7. Calificación y sincronización del lead
+    # =====================================================
+        # Evaluación de Lead
         new_status = calcular_estado_lead(
             memory=memory,
             lead_fields=lead_fields,
@@ -359,7 +373,10 @@ def lambda_handler(event, context):
             prompt_config=prompt_config,
             BITRIX_WEBHOOK=BITRIX_WEBHOOK
         )
-        
+
+    # =====================================================
+    # 8. Persistencia
+    # =====================================================    
         # 6. Guardar Memoria
         guardar_memoria(
             table=table,
@@ -380,9 +397,9 @@ def lambda_handler(event, context):
                 lead_status=new_status
             )
 
-        # ======================================
-        # Respuesta según canal
-        # ======================================
+    # =====================================================
+    # 9. Envío de la respuesta
+    # =====================================================
         
         if channel == "whatsapp":
 
@@ -438,6 +455,10 @@ def lambda_handler(event, context):
                     "error": "Canal desconocido"
                 })
             }
+        
+    # =====================================================
+    # Manejo global de errores
+    # =====================================================
 
     except Exception as e:
         print("========== ERROR GENERAL ==========")

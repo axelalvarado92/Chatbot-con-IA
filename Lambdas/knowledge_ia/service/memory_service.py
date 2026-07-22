@@ -15,13 +15,19 @@ def obtener_memoria(table, user_id):
         "country": "No definido",
         "lead_sent": False,
         "lead_id": None,
-        "human_agent": False,
+    
+        "conversation_owner": "bot",
+        "last_human_interaction": None,
+    
         "user_type": None,
         "phone_contact": None,
         "budget_status": None,
         "budget_known": False,
         "name": None,
-        "policy": None
+        "policy": None,
+        "bot_disabled_until": None,
+        "chat_bot_disabled": False,
+        "chat_bot_until": None
     })
 
     return memory
@@ -51,11 +57,11 @@ def actualizar_campos_basicos(memory, ai_response):
 def sincronizar_memoria(
     memory,
     extracted,
-    lead_fields,
+    required_fields,
     channel
 ):
 
-    campos_memoria = lead_fields.copy()
+    campos_memoria = required_fields.copy()
 
     if "phone_contact" not in campos_memoria:
         campos_memoria.append("phone_contact")

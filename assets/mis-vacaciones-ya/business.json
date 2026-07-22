@@ -50,5 +50,9 @@
   "crm": {
     "enabled": true,
     "provider": "bitrix24"
+  },
+  "chat": {
+    "human_timeout_days": 15
   }
+
 }

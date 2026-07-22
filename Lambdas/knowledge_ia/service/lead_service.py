@@ -1,13 +1,12 @@
 def calcular_estado_lead(
     memory,
-    lead_fields,
-    channel,
+    required_fields,
     policy
 ):
     
     filled = sum(
         1
-        for k in lead_fields
+        for k in required_fields
         if memory.get(k)
     )
     budget_status = memory.get("budget_status")
@@ -20,7 +19,7 @@ def calcular_estado_lead(
         new_status = "hot" if base_hot else "warm"
     else:
         if (
-            (filled == len(lead_fields) and memory.get("phone_contact") and policy["require_phone_for_hot"])
+            (filled == len(required_fields) and memory.get("phone_contact") and policy["require_phone_for_hot"])
             or
             (base_hot and memory.get("budget_unknown") and memory.get("phone_contact") and policy["require_phone_for_hot"])
             or
@@ -38,15 +37,18 @@ def obtener_campos_faltantes(
     memory,
     prompt_config
 ):
-    lead_fields = prompt_config.get(
-        "lead_fields",
-        ["destination", "people", "date", "budget"]
+    required_fields = prompt_config.get(
+        "required_fields",
+        prompt_config.get(
+            "required_fields",
+            []
+        )
     )
 
     faltantes = []
 
-    for campo in lead_fields:
+    for campo in required_fields:
         if not memory.get(campo):
             faltantes.append(campo)
 
-    return lead_fields, faltantes
+    return required_fields, faltantes

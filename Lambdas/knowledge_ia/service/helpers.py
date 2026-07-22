@@ -6,7 +6,20 @@ from decimal import Decimal
 def detectar_tipo_usuario(texto):
     t = texto.lower()
 
-    if any(p in t for p in ["proveedor", "hotel", "agencia", "partner", "colaboración"]):
+    if any(p in t for p in [
+        "soy proveedor",
+        "quiero ofrecer",
+        "quiero vender",
+        "colaboración",
+        "colaborar",
+        "partner",
+        "alianza",
+        "represento",
+        "hotel",
+        "operador",
+        "mayorista",
+        "agencia de viajes",
+        "proveedor"]):
         return "proveedor"
 
     if any(p in t for p in ["ya viaje", "ya viajé", "cliente", "viaje con ustedes", "compré", "compre"]):

@@ -27,6 +27,10 @@ from service.user_context_service import (
     preparar_contexto_usuario
 )
 
+from service.conversation_service import (
+    verificar_timeout_conversacion
+)
+
 from service.request_service import (
     parse_request
 )
@@ -121,7 +125,7 @@ def lambda_handler(event, context):
     # =====================================================
     
     try:
-        # 0. Configuración Inicial
+        # Configuración Inicial
         TABLE_NAME             = os.environ.get("TABLE_NAME")
         BUCKET_NAME            = os.environ.get("BUCKET_NAME")
         KNOWLEDGE_FILE         = os.environ.get("KNOWLEDGE_FILE")
@@ -159,10 +163,9 @@ def lambda_handler(event, context):
                     business_config
                 )
             
-            
-     # =====================================================
-     # 1. Recepción y validación de la solicitud
-     # =====================================================
+    # =====================================================
+    # 1. Recepción y validación de la solicitud
+    # =====================================================
             # Parseo del body
             raw_body = event.get("body", "{}")
             body = json.loads(raw_body)
@@ -230,11 +233,16 @@ def lambda_handler(event, context):
             user_id=user_id,
             user_question=user_question
         )
+
+        memory = verificar_timeout_conversacion(
+            memory,
+            business_config
+        )
        
     # =====================================================
     # 3. Analizar estado del lead
     # =====================================================
-        lead_fields, faltantes = obtener_campos_faltantes(
+        required_fields, faltantes = obtener_campos_faltantes(
             memory,
             prompt_config
         )
@@ -244,7 +252,8 @@ def lambda_handler(event, context):
         # FILTRO DE TIPO DE USUARIO
         mensaje = validar_tipo_usuario(
             memory,
-            channel
+            channel,
+            business_config
         )
         
         if mensaje:
@@ -268,6 +277,8 @@ def lambda_handler(event, context):
         ):
 
             respuesta = procesar_comando_admin(
+                memory=memory,
+                table=table,
                 comando=user_question,
                 user_id=user_id,
                 config=config,
@@ -332,7 +343,8 @@ def lambda_handler(event, context):
             agency_knowledge=agency_knowledge,
             memory=memory,
             user_question=user_question,
-            faltantes_texto=faltantes_texto
+            faltantes_texto=faltantes_texto,
+            required_fields=required_fields
         )
 
         extracted = ai_response.get("extracted_data", {})
@@ -345,8 +357,9 @@ def lambda_handler(event, context):
             memory=memory,
             extracted=extracted,
             user_question=user_question,
+            prompt_config=prompt_config,
             ai_response=ai_response,
-            lead_fields=lead_fields,
+            required_fields=required_fields,
             policy=policy,
             channel=channel
         )
@@ -357,8 +370,7 @@ def lambda_handler(event, context):
         # Evaluación de Lead
         new_status = calcular_estado_lead(
             memory=memory,
-            lead_fields=lead_fields,
-            channel=channel,
+            required_fields=required_fields,
             policy=policy
         )
 

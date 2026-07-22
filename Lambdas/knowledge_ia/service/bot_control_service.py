@@ -1,15 +1,42 @@
+from service.bot_pause_service import (
+    bot_esta_pausado,
+    pausar_bot,
+    activar_bot
+)
+
+from datetime import datetime
+
 def puede_responder(memory, config, channel):
 
     # La web siempre responde
     if channel == "web":
         return True
 
-    # Si un asesor tomó esta conversación,
-    # el bot no responde más.
-    if memory.get("human_agent"):
-        return False
+    # ============================
+    # Chat pausado temporalmente
+    # ============================
 
-    # Si el bot está deshabilitado globalmente.
+    bot_disabled_until = memory.get("bot_disabled_until")
+
+    if bot_disabled_until:
+
+        try:
+
+            fecha = datetime.fromisoformat(bot_disabled_until)
+
+            if datetime.utcnow() < fecha:
+                return False
+
+            # Si ya venció, el bot vuelve a responder normalmente.
+            memory["bot_disabled_until"] = None
+
+        except Exception:
+            memory["bot_disabled_until"] = None
+
+    # ============================
+    # Bot global
+    # ============================
+
     if not config.get("bot_enabled", True):
         return False
 

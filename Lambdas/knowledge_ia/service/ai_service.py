@@ -1,8 +1,16 @@
+#CONSTRUYE EL PROMPT
 import json
 
 from service.helpers import (
     convert_decimals,
     normalizar_extracciones
+)
+
+from service.prompt_builder_service import (
+    construir_datos_obtenidos,
+    construir_datos_faltantes,
+    construir_json_extraccion,
+    construir_system_prompt,
 )
 
 def obtener_respuesta_ai(
@@ -12,57 +20,32 @@ def obtener_respuesta_ai(
     memory,
     user_question,
     faltantes_texto,
+    required_fields
 ):
     
     safe_memory = convert_decimals(memory)
+    datos_obtenidos = construir_datos_obtenidos(
+        memory,
+        required_fields
+    )
+
+    datos_faltantes = construir_datos_faltantes(
+        faltantes_texto.split(", ") if faltantes_texto else []
+    )
     
-    system_prompt = f"""
-CONTEXTO AGENCIA: {agency_knowledge}
-Eres {prompt_config['assistant_name']},
-asesora de viajes de {prompt_config['company_name']}.
-
-MEMORIA CLIENTE:
-{json.dumps(safe_memory)}
-
-DATOS YA OBTENIDOS:
-Destino: {memory.get("destination")}
-Viajeros: {memory.get("people")}
-Fecha: {memory.get("date")}
-Presupuesto: {memory.get("budget")}
-
-DATOS FALTANTES:
-{faltantes_texto}
-
-ESTADO PRESUPUESTO:
-{memory.get("budget_status")}
-
-TU MISIÓN:
-{chr(10).join(prompt_config['mission'])}
-
-REGLAS DE RECOMENDACIÓN:
-{chr(10).join(prompt_config['recommendation_rules'])}
-
-REGLAS DE EXTRACCIÓN DE DATOS:
-{chr(10).join(prompt_config['extraction_rules'])}
-
-REGLAS DE ORO:
-{chr(10).join(prompt_config['golden_rules'])}
-
-LÓGICA DE CIERRE:
-{chr(10).join(prompt_config['closing_logic'])}
-
-RESPONDE SIEMPRE EN JSON:
-{{
-  "answer": "tu respuesta",
-  "extracted_data": {{
-    "destination": "valor o null",
-    "people": "valor o null",
-    "date": "valor o null",
-    "budget": "valor o null",
-    "phone_contact": "valor o null"
-  }}
-}}
-"""
+    json_extraccion = construir_json_extraccion(
+        required_fields
+    )
+    
+    system_prompt = construir_system_prompt(
+        prompt_config=prompt_config,
+        agency_knowledge=agency_knowledge,
+        safe_memory=json.dumps(safe_memory),
+        datos_obtenidos=datos_obtenidos,
+        datos_faltantes=datos_faltantes,
+        memory=memory,
+        json_extraccion=json_extraccion
+    )
 
     messages_to_send = [{"role": "system", "content": system_prompt}]
 

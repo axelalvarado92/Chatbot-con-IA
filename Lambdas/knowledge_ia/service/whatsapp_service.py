@@ -1,8 +1,14 @@
 import requests
 import time
 import json
+from service.helpers import convert_decimals
 
-import time
+
+from service.bot_pause_service import (
+    pausar_bot,
+    activar_bot
+)
+
 from service.config_service import (
     guardar_configuracion
 )
@@ -62,9 +68,17 @@ def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
     print(f"URL utilizada: {url}")
     print(f"WhatCRM response: {res.status_code} - {res.text}")
 
+def guardar_estado_chat(table, memory):
+
+    table.put_item(
+        Item=convert_decimals(memory)
+    )
+
 def procesar_comando_admin(
     comando,
     user_id,
+    memory,
+    table,
     config,
     config_table,
     business_config,
@@ -153,17 +167,29 @@ def procesar_comando_admin(
     
     
     elif comando == "#bot help":
-    
+
         respuesta = (
             "🤖 Comandos disponibles\n\n"
+    
+            "🌍 BOT GLOBAL\n"
             "• #bot on\n"
             "• #bot off\n"
-            "• #bot status\n"
-            "• #bot help\n"
-            "• #bot config\n"
-            "• #bot stats\n"
+            "• #bot status\n\n"
+    
+            "💬 CONVERSACIÓN ACTUAL\n"
+            "• #chat off\n"
+            "• #chat off 30\n"
+            "• #chat on\n\n"
+            "• #chat status\n\n"
+    
+            "🕒 HORARIO\n"
             "• #bot horario\n"
-            "• #bot reload"
+            "• #bot horario on\n"
+            "• #bot horario off\n\n"
+    
+            "⚙️ OTROS\n"
+            "• #bot reload\n"
+            "• #bot stats"
         )
     
         responder_whatsapp(
@@ -289,4 +315,92 @@ def procesar_comando_admin(
             })
         } 
     
+    elif comando == "#chat off":
+
+        memory = pausar_bot(memory)
+    
+        guardar_estado_chat(
+            table,
+            memory
+        )
+    
+        respuesta = (
+            "🤖 Chat desactivado.\n"
+            "El asistente no responderá en esta conversación durante 30 días "
+            "o hasta ejecutar #chat on."
+        )
+    
+        responder_whatsapp(
+            respuesta,
+            user_id,
+            send_messages,
+            instance,
+            token
+        )
+    
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "answer": respuesta
+            })
+        }
+    
+    elif comando == "#chat on":
+
+        memory = activar_bot(memory)
+    
+        guardar_estado_chat(
+            table,
+            memory
+        )
+    
+        respuesta = (
+            "✅ Chat reactivado.\n"
+            "El asistente volverá a responder automáticamente."
+        )
+    
+        responder_whatsapp(
+            respuesta,
+            user_id,
+            send_messages,
+            instance,
+            token
+        )
+    
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "answer": respuesta
+            })
+        }
+    
+    elif comando == "#chat status":
+
+        estado = memory.get("bot_disabled_until")
+    
+        if estado:
+            respuesta = (
+                "🤖 Estado del chat\n\n"
+                f"Desactivado hasta:\n{estado}"
+            )
+        else:
+            respuesta = (
+                "🤖 Estado del chat\n\n"
+                "Activo ✅"
+            )
+    
+        responder_whatsapp(
+            respuesta,
+            user_id,
+            send_messages,
+            instance,
+            token
+        )
+    
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "answer": respuesta
+            })
+        }
 

@@ -63,11 +63,21 @@ from service.bot_control_service import (
     es_comando_admin
 )
 
+from service.bot_pause_service import (
+    pausar_bot,
+    activar_bot,
+    bot_esta_pausado
+)
+
 from service.memory_service import (
     obtener_memoria,
     actualizar_campos_basicos,
     sincronizar_memoria,
     guardar_memoria
+)
+
+from service.whatsapp_service import (
+    guardar_estado_chat
 )
 
 from service.memory_update_service import actualizar_memoria
@@ -117,8 +127,19 @@ CHANNEL_POLICY = {
 }
 
 def lambda_handler(event, context):
+
     print("RAW EVENT:", json.dumps(event, default=str), flush=True)
-    sys.stdout.flush()            
+    sys.stdout.flush()
+
+    path = event.get("rawPath", "")
+    method = (
+        event.get("requestContext", {})
+        .get("http", {})
+        .get("method", "")
+    )
+
+    print("PATH:", path)
+    print("METHOD:", method)       
     
     # =====================================================
     # 0. Inicialización de la aplicación
@@ -170,6 +191,82 @@ def lambda_handler(event, context):
             raw_body = event.get("body", "{}")
             body = json.loads(raw_body)
 
+            # =====================================================
+            # Endpoint de administración
+            # =====================================================
+            
+            if path == "/control" and method == "POST":
+                print(">>> ENTRO AL ENDPOINT CONTROL <<<")
+                
+                print("Solicitud de administración recibida")
+                body = json.loads(
+                    event.get("body", "{}")
+                )
+                
+                action = body.get("action")
+                print(f"ACTION: {action}")
+                chat_id = body.get("chat_id")
+                days = body.get("days", 15)
+                
+                if action == "pause":
+    
+                    memory = obtener_memoria(
+                        table,
+                        chat_id
+                    )
+                
+                    memory = pausar_bot(
+                        memory,
+                        days
+                    )
+                
+                    guardar_estado_chat(
+                        table,
+                        memory
+                    )
+                
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "success": True,
+                            "chat_id": chat_id,
+                            "paused_until": memory["bot_disabled_until"]
+                        })
+                    }
+    
+                elif action == "resume":
+    
+                    memory = obtener_memoria(
+                        table,
+                        chat_id
+                    )
+                
+                    memory = activar_bot(
+                        memory
+                    )
+                
+                    guardar_estado_chat(
+                        table,
+                        memory
+                    )
+                
+                    return {
+                        "statusCode": 200,
+                        "body": json.dumps({
+                            "success": True,
+                            "chat_id": chat_id,
+                            "message": "Chat reactivado"
+                        })
+                    }
+
+                else:
+                    return {
+                        "statusCode": 400,
+                        "body": json.dumps({
+                            "error": f"Acción desconocida: {action}"
+                        })
+                    }
+
             # Eventos ACK de WhatCRM
             if "acks" in body:
             
@@ -190,6 +287,12 @@ def lambda_handler(event, context):
             request = parse_request(
                 body,
                 business_config
+            )
+
+            print(
+                "REQUEST PARSEADO:",
+                json.dumps(request, default=str),
+                flush=True
             )
             
             if request is None:
@@ -227,17 +330,44 @@ def lambda_handler(event, context):
     # =====================================================
     # 2. Preparar contexto del usuario
     # =====================================================
-        # Recuperar Memoria
+    
         memory = preparar_contexto_usuario(
             table=table,
             user_id=user_id,
             user_question=user_question
         )
-
+        
+        print(
+            "MEMORIA RECUPERADA:",
+            json.dumps(memory, default=str),
+            flush=True
+        )
+        
         memory = verificar_timeout_conversacion(
             memory,
             business_config
         )
+        
+        chat_pausado = bot_esta_pausado(memory)
+        
+        print(
+            "DEBUG PAUSA - chat_pausado:",
+            chat_pausado,
+            flush=True
+        )
+        
+        if chat_pausado:
+        
+            print("BOT PAUSADO PARA ESTE CHAT")
+        
+            if not es_comando_admin(user_question):
+        
+                return {
+                    "statusCode": 200,
+                    "body": json.dumps({
+                        "ok": True
+                    })
+                }
        
     # =====================================================
     # 3. Analizar estado del lead
@@ -275,6 +405,7 @@ def lambda_handler(event, context):
             channel == "whatsapp"
             and es_comando_admin(user_question)
         ):
+            print(">>> ENTRANDO A PROCESAR_COMANDO_ADMIN <<<")
 
             respuesta = procesar_comando_admin(
                 memory=memory,
@@ -344,10 +475,13 @@ def lambda_handler(event, context):
             memory=memory,
             user_question=user_question,
             faltantes_texto=faltantes_texto,
-            required_fields=required_fields
+            required_fields=required_fields,
+            channel=channel,
         )
 
         extracted = ai_response.get("extracted_data", {})
+        print("=== EXTRACTED BEFORE SYNC ===", extracted)
+        print("=== AI_RESPONSE KEYS ===", ai_response.keys()) 
     
     # =====================================================
     # 6. Actualización del contexto del usuario

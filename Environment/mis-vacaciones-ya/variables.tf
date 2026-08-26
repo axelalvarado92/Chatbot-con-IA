@@ -61,3 +61,9 @@ variable "send_whatsapp_messages" {
     default = true
 }
 
+variable "force_destroy_audit_bucket" {
+    description = "Indica si se debe forzar la destrucción del bucket de auditoría"
+    type = bool
+    default = false
+}
+

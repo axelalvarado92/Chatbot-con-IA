@@ -56,6 +56,7 @@ def extraer_telefono(texto):
     return None
 
 def normalizar_extracciones(extracted, user_question):
+    print(f"=== NORMALIZAR input: extracted={extracted}, question={user_question}")
     texto = user_question.lower().strip()
 
     # Teléfonos
@@ -70,13 +71,12 @@ def normalizar_extracciones(extracted, user_question):
     }
 
     if not extracted.get("people"):
-        # Número exacto como mensaje
+        
         if texto in numeros_texto:
             extracted["people"] = numeros_texto[texto]
         elif texto.isdigit():
             extracted["people"] = int(texto)
         else:
-            # Número dentro de una frase: "somos 3", "viajamos 4 personas", etc.
             match = re.search(r'\b(\d+)\b', texto)
             if match:
                 num = int(match.group(1))
@@ -84,7 +84,20 @@ def normalizar_extracciones(extracted, user_question):
                 if 1 <= num <= 20:
                     extracted["people"] = num
 
+    # Fallback para destination si el modelo no extrajo nada
+    if not extracted.get("destination"):
+        texto = user_question.lower()
+        # Lista de destinos conocidos (esto debería venir del knowledge, pero por ahora hardcodeá los principales)
+        destinos_conocidos = ["italia", "francia", "españa", "brasil", "mexico", "miami", "europa"]
+        for destino in destinos_conocidos:
+            if destino in texto:
+                extracted["destination"] = destino.capitalize()
+                break
+    print(f"=== NORMALIZAR output: extracted={extracted}")
+    
     return extracted
+
+
 
 def calcular_estado_presupuesto(destination, people, budget):
 

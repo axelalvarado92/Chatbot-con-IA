@@ -57,4 +57,9 @@ def es_comando_admin(texto):
     if not texto:
         return False
 
-    return texto.strip().lower().startswith("#bot")
+    texto = texto.strip().lower()
+
+    return (
+        texto.startswith("#bot")
+        or texto.startswith("#chat")
+    )

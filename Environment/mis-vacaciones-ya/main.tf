@@ -3,6 +3,7 @@
 ###############################################################
 resource "aws_s3_bucket" "audit" {
   bucket = "${var.project_name}-${var.client_name}-audit"
+  force_destroy = var.force_destroy_audit_bucket
 }
 
 module "s3" {

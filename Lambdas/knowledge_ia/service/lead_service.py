@@ -33,22 +33,28 @@ def calcular_estado_lead(
 
     return new_status
 
-def obtener_campos_faltantes(
-    memory,
-    prompt_config
-):
-    required_fields = prompt_config.get(
-        "required_fields",
-        prompt_config.get(
-            "required_fields",
-            []
-        )
-    )
-
+def obtener_campos_faltantes(memory, prompt_config):
+    required_fields = prompt_config.get("required_fields") or prompt_config.get("lead_fields") or []
+    
+    # NUEVO: Leer contexto conversacional de la memoria
+    last_intent = memory.get("last_intent", "proporcionar_dato")
+    campos_rechazados = memory.get("campos_rechazados", [])
+    
     faltantes = []
 
     for campo in required_fields:
-        if not memory.get(campo):
-            faltantes.append(campo)
+        # Si ya existe, no es faltante
+        if memory.get(campo):
+            continue
+        
+        # NUEVO: Si el usuario consultó disponibilidad de este campo, no lo trates como faltante ahora
+        if campo == "date" and last_intent == "consultar_disponibilidad":
+            continue
+            
+        # NUEVO: Si el usuario ya rechazó dar este dato, no lo pidas de nuevo
+        if campo in campos_rechazados:
+            continue
+
+        faltantes.append(campo)
 
     return required_fields, faltantes

@@ -48,8 +48,19 @@ def responder_whatsapp(
     else:
 
         print("Modo desarrollo: mensaje NO enviado a WhatsApp.")
+        print("DEBUG WHATSAPP: mensaje NO enviado")
+        print(f"DEBUG chat_id: {chat_id}")
+        print(f"DEBUG mensaje: {texto}")
+        print(f"DEBUG send_messages: {send_messages}")
+        print(f"DEBUG token configurado: {bool(token)}")
 
-def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto):
+def enviar_respuesta_whatcrm(WHATCRM_INSTANCE, WHATCRM_TOKEN, chat_id, texto, send_messages=True):
+
+    if not send_messages:
+        print("DEBUG: envío WhatsApp deshabilitado")
+        print(f"DEBUG chat_id: {chat_id}")
+        print(f"DEBUG mensaje: {texto}")
+        return
 
     url = f"https://api.whatcrm.net/instances/{WHATCRM_INSTANCE}/sendMessage"
     

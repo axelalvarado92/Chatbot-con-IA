@@ -21,11 +21,11 @@ resource "aws_apigatewayv2_api" "http_api" {
 }
 
 resource "aws_apigatewayv2_integration" "lambda_integration" {
-  api_id           = aws_apigatewayv2_api.http_api.id
-  integration_type = "AWS_PROXY"
+  api_id                    = aws_apigatewayv2_api.http_api.id
+  integration_type          = "AWS_PROXY"
   integration_method        = "POST"
   integration_uri           = var.lambda_invoke_arn
-  payload_format_version = "2.0"
+  payload_format_version    = "2.0"
 
 }
 
@@ -33,6 +33,13 @@ resource "aws_apigatewayv2_route" "chat_ia" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "POST /chat"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "chat_control" {
+  api_id    = aws_apigatewayv2_api.http_api.id
+  route_key = "POST /control"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  
 }
 
 data "aws_caller_identity" "current" {

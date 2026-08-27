@@ -30,3 +30,6 @@ Thumbs.db
 # Secrets
 .env
 terraform.tfvars
+
+# carpeta con info del negocio
+assets/

@@ -54,10 +54,13 @@ def construir_system_prompt(
     intents = prompt_config.get("intents", {})
     next_actions = prompt_config.get("next_actions", {})
     intent_behavior = prompt_config.get("intent_behavior", {})
+    handoff_rules = prompt_config.get("handoff_rules",[])
     
     intents_text = "\n".join([f'- {k}: {v}' for k, v in intents.items()])
     next_actions_text = "\n".join([f'- {k}: {v}' for k, v in next_actions.items()])
     intent_behavior_text = "\n".join([f"- {k}: {v}" for k, v in intent_behavior.items()])
+    handoff_rules_text = "\n".join(f"- {rule}"for rule in handoff_rules)
+    
 
     # 2. Armar ejemplos para el prompt
     ejemplos_raw = prompt_config.get("examples", [])
@@ -108,12 +111,23 @@ COMPORTAMIENTO SEGÚN INTENCIÓN:
 ACCIONES POSIBLES PARA TU SIGUIENTE PASO:
 {next_actions_text}
 
+REGLAS DE DERIVACIÓN HUMANA:
+{handoff_rules_text}
+
 INSTRUCCIÓN CRÍTICA:
 Antes de responder, clasificá la intención del último mensaje del usuario.
 Elegí la acción que debe seguir tu respuesta. 
 Si el usuario está consultando (no proporcionando datos), tu acción debe ser INFORMATIVA, no extractiva.
 Si el usuario rechazó dar un dato, no insistas con el mismo tema.
 Nunca pidas un dato que ya figure en "DATOS YA OBTENIDOS".
+
+REGLA DE CANAL:
+El canal actual es: {channel}
+
+Si el canal es WhatsApp:
+- Si el CANAL ACTUAL es whatsapp, nunca elijas request_phone.
+- Si la conversación requiere intervención humana, seleccioná derivar_humano.
+- En WhatsApp el chat_id ya identifica la conversación y el asesor puede continuar desde el CRM.
 
 {secciones_prompt}
 

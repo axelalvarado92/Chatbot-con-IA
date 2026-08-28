@@ -89,9 +89,73 @@ def obtener_respuesta_ai(
     confidence = ai_response.get("confidence", "high")
     next_action = ai_response.get("next_action", "continue_collecting")
     reasoning = ai_response.get("reasoning", "")
-    
+
     print(f"========== INTELLIGENCE ==========")
     print(f"intent: {intent} | confidence: {confidence} | next_action: {next_action}")
     print(f"reasoning: {reasoning}")
+
+    # =====================================================
+    # REGLA DE CANAL
+    # =====================================================
+    
+    if channel == "whatsapp" and next_action == "request_phone":
+    
+        print(
+            "=== CHANNEL OVERRIDE: WhatsApp no permite request_phone ===",
+            flush=True
+        )
+    
+        next_action = "derivar_humano"
+    
+        reasoning = (
+            "La acción request_phone no está permitida en WhatsApp. "
+            "La conversación debe continuar mediante derivación humana "
+            "sin solicitar un teléfono adicional."
+        )
+    
+        ai_response["next_action"] = next_action
+        ai_response["reasoning"] = reasoning
+
+    # =====================================================
+    # VALIDACIÓN DE HANDOFF
+    # =====================================================
+    
+    if next_action == "derivar_humano":
+    
+        print(
+            "=== HANDOFF DETECTADO ===",
+            flush=True
+        )
+    
+        print(
+            f"HANDOFF ANSWER: {ai_response.get('answer', '')}",
+            flush=True
+        )
+    
+    # =====================================================
+    # INTELIGENCIA FINAL
+    # =====================================================
+    
+    ai_response["intent"] = intent
+    ai_response["confidence"] = confidence
+    ai_response["next_action"] = next_action
+    ai_response["reasoning"] = reasoning
+    
+    print(
+        f"========== FINAL INTELLIGENCE ==========",
+        flush=True
+    )
+    
+    print(
+        f"intent: {intent} | "
+        f"confidence: {confidence} | "
+        f"next_action: {next_action}",
+        flush=True
+    )
+    
+    print(
+        f"reasoning: {reasoning}",
+        flush=True
+    )
     
     return ai_response

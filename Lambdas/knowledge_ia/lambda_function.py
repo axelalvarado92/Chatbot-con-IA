@@ -113,19 +113,6 @@ s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-CHANNEL_POLICY = {
-    "web": {
-        "ask_phone": True,
-        "require_phone_for_hot": True,
-        "auto_hot": False
-    },
-    "whatsapp": {
-        "ask_phone": False,
-        "require_phone_for_hot": False,
-        "auto_hot": True
-    }
-}
-
 def lambda_handler(event, context):
 
     print("RAW EVENT:", json.dumps(event, default=str), flush=True)
@@ -499,26 +486,38 @@ def lambda_handler(event, context):
         )
    
     # =====================================================
-    # 7. Calificación y sincronización del lead
+    # 7. GESTIÓN DE LEAD
     # =====================================================
-        # Evaluación de Lead
-        new_status = calcular_estado_lead(
-            memory=memory,
-            required_fields=required_fields,
-            policy=policy
+        
+        lead_management = business_config.get(
+            "lead_management",
+            {}
         )
-
-
-        # 5. CREAR LEAD EN BITRIX
-        enviar_lead_bitrix(
-            memory=memory,
-            user_id=user_id,
-            user_question=user_question,
-            ai_response=ai_response,
-            new_status=new_status,
-            prompt_config=prompt_config,
-            BITRIX_WEBHOOK=BITRIX_WEBHOOK
+        
+        lead_management_enabled = lead_management.get(
+            "enabled",
+            False
         )
+        
+        new_status = None
+
+        if lead_management_enabled:
+        
+            new_status = calcular_estado_lead(
+                memory=memory,
+                required_fields=required_fields,
+                policy=policy
+            )
+        
+            enviar_lead_bitrix(
+                memory=memory,
+                user_id=user_id,
+                user_question=user_question,
+                ai_response=ai_response,
+                new_status=new_status,
+                prompt_config=prompt_config,
+                BITRIX_WEBHOOK=BITRIX_WEBHOOK
+            )
 
     # =====================================================
     # 8. Persistencia

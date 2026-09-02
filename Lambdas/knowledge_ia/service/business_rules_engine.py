@@ -6,11 +6,11 @@ def aplicar_reglas_negocio(
     ai_response,
     policy,
     user_question,
-    prompt_config,
+    business_config,
     channel,
 ):
 
-    rules = prompt_config.get(
+    rules = business_config.get(
         "business_rules",
         {}
     )

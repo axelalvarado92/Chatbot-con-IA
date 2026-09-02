@@ -30,32 +30,21 @@ def obtener_memoria(table, user_id):
 
     return memory
 
-def actualizar_campos_basicos(memory, ai_response):
-
-    campos = [
-        "destination",
-        "people",
-        "date",
-        "budget",
-        "email",
-        "name",
-        "country"
-    ]
-
-    for campo in campos:
-
-        valor = ai_response.get(campo)
-
-        if valor not in [None, "", "No definido"]:
-
-            memory[campo] = valor
-
-    return memory
-
-def sincronizar_memoria(memory, extracted, required_fields, channel, ai_response=None):
+def sincronizar_memoria(
+    memory,
+    extracted,
+    required_fields,
+    optional_fields,
+    channel,
+    ai_response=None
+):
 
     print("=== SYNC INPUT ===", "extracted:", extracted, "ai_response:", ai_response)
     campos_memoria = required_fields.copy()
+
+    for campo in optional_fields:
+        if campo not in campos_memoria:
+            campos_memoria.append(campo)
 
     if "phone_contact" not in campos_memoria:
         campos_memoria.append("phone_contact")

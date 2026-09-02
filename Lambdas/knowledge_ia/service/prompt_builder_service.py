@@ -136,13 +136,23 @@ RESPONDE SIEMPRE EN JSON:
 {json_extraccion}
 """
 
-def construir_json_extraccion(prompt_config, required_fields):
+def construir_json_extraccion(
+    prompt_config,
+    required_fields,
+    optional_fields
+):
     
     # Schema de extracted_data con los campos que ya tenías
     extracted = {
         campo: None
         for campo in required_fields
     }
+
+    # Agregar campos opcionales
+    for campo in optional_fields:
+        if campo not in extracted:
+            extracted[campo] = None
+    
 
     # Leer las opciones válidas desde la config
     intents = list(prompt_config.get("intents", {}).keys())

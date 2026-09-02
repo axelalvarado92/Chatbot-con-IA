@@ -21,10 +21,12 @@ def obtener_respuesta_ai(
     user_question,
     faltantes_texto,
     required_fields,
+    optional_fields,
     channel,
 ):
     
     safe_memory = convert_decimals(memory)
+
     datos_obtenidos = construir_datos_obtenidos(
         memory,
         required_fields
@@ -36,7 +38,8 @@ def obtener_respuesta_ai(
     
     json_extraccion = construir_json_extraccion(
         prompt_config,
-        required_fields
+        required_fields,
+        optional_fields,
     )
     
     system_prompt = construir_system_prompt(

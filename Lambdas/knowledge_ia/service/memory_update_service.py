@@ -2,6 +2,8 @@ from service.memory_service import sincronizar_memoria
 from service.business_rules_engine import aplicar_reglas_negocio
 
 
+
+
 def actualizar_memoria(
     memory,
     extracted,
@@ -10,13 +12,24 @@ def actualizar_memoria(
     required_fields,
     policy,
     channel,
-    prompt_config
+    business_config,
 ):
+
+    optional_fields = business_config.get(
+        "optional_fields",
+        []
+    )
+
+    print(
+        "=== DATOS EXTRAIDOS ANTES DE SYNC ===",
+        extracted
+    )
     
     memory = sincronizar_memoria(
         memory=memory,
         extracted=extracted,
         required_fields=required_fields,
+        optional_fields=optional_fields,
         channel=channel,
         ai_response=ai_response,
     )
@@ -26,7 +39,7 @@ def actualizar_memoria(
         ai_response=ai_response,
         policy=policy,
         user_question=user_question,
-        prompt_config=prompt_config,
+        business_config=business_config,
         channel=channel,
     )
     

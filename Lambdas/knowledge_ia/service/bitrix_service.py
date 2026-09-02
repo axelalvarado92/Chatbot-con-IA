@@ -7,28 +7,26 @@ def enviar_lead_bitrix(
     user_question,
     ai_response,
     new_status,
-    prompt_config,
+    business_config,
     BITRIX_WEBHOOK
 ):
     if new_status == "hot" and not memory.get("lead_sent") and BITRIX_WEBHOOK:
 
-        mapa_destinos = {"españa": "1367",
-                        "roma": "1347",
-                        "italia": "1347",
-                        "argentina": "1207",
-                        "china": "1765",
-                        "japon": "1081",
-                        "francia": "1817",
-                        "grecia": "1977",
-                        "egipto": "1507",
-                        "turquia": "1687",
-                        "corea del sur": "1083",
-                        "dubai": "1477",
-                        "marruecos": "1377",
-                        "india": "1085"
-                        }
+        crm_config = business_config.get(
+            "crm",
+            {}
+        )
         
-        mapa_origenes = {"argentina": "263", "españa": "261"}
+        mapa_destinos = crm_config.get(
+            "destination_mapping",
+            {}
+        )
+        
+        mapa_origenes = crm_config.get(
+            "origin_mapping",
+            {}
+        )
+        
         dest_mem = str(memory.get("destination", "")).lower().strip()
         orig_mem = str(memory.get("country", "")).lower().strip()
         id_destino = mapa_destinos.get(dest_mem, "1213")
@@ -38,10 +36,10 @@ def enviar_lead_bitrix(
         ]
         charla_texto = formatear_historial(
             temp_history,
-            prompt_config["assistant_name"]
+            business_config["assistant_name"]
         )
         fields = {
-            "TITLE": f"{prompt_config['company_name']} - {user_id}",
+            "TITLE": f"{business_config['company_name']} - {user_id}",
             "OPPORTUNITY": memory.get("budget"),
             "UF_CRM_1729943385206": id_destino,
             "UF_CRM_1729072409973": id_origen,
@@ -87,7 +85,7 @@ def enviar_lead_bitrix(
         ]
         charla_texto = formatear_historial(
             temp_history,
-            prompt_config["assistant_name"]
+            business_config["assistant_name"]
         )
         
         try:

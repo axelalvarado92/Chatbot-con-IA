@@ -70,29 +70,6 @@ def normalizar_extracciones(extracted, user_question):
         "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
     }
 
-    if not extracted.get("people"):
-        
-        if texto in numeros_texto:
-            extracted["people"] = numeros_texto[texto]
-        elif texto.isdigit():
-            extracted["people"] = int(texto)
-        else:
-            match = re.search(r'\b(\d+)\b', texto)
-            if match:
-                num = int(match.group(1))
-                # Evitar confundir años o presupuestos con personas
-                if 1 <= num <= 20:
-                    extracted["people"] = num
-
-    # Fallback para destination si el modelo no extrajo nada
-    if not extracted.get("destination"):
-        texto = user_question.lower()
-        # Lista de destinos conocidos (esto debería venir del knowledge, pero por ahora hardcodeá los principales)
-        destinos_conocidos = ["italia", "francia", "españa", "brasil", "mexico", "miami", "europa"]
-        for destino in destinos_conocidos:
-            if destino in texto:
-                extracted["destination"] = destino.capitalize()
-                break
     print(f"=== NORMALIZAR output: extracted={extracted}")
     
     return extracted

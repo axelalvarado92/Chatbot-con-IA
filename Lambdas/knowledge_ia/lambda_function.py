@@ -71,7 +71,6 @@ from service.bot_pause_service import (
 
 from service.memory_service import (
     obtener_memoria,
-    actualizar_campos_basicos,
     sincronizar_memoria,
     guardar_memoria
 )
@@ -359,9 +358,19 @@ def lambda_handler(event, context):
     # =====================================================
     # 3. Analizar estado del lead
     # =====================================================
+        required_fields = business_config.get(
+            "required_fields",
+            []
+        )
+
+        optional_fields = business_config.get(
+            "optional_fields",
+            []
+        )
+
         required_fields, faltantes = obtener_campos_faltantes(
             memory,
-            prompt_config
+            required_fields
         )
         
         faltantes_texto = ", ".join(faltantes)
@@ -463,6 +472,7 @@ def lambda_handler(event, context):
             user_question=user_question,
             faltantes_texto=faltantes_texto,
             required_fields=required_fields,
+            optional_fields=optional_fields,
             channel=channel,
         )
 
@@ -478,7 +488,7 @@ def lambda_handler(event, context):
             memory=memory,
             extracted=extracted,
             user_question=user_question,
-            prompt_config=prompt_config,
+            business_config=business_config,
             ai_response=ai_response,
             required_fields=required_fields,
             policy=policy,
@@ -500,7 +510,7 @@ def lambda_handler(event, context):
         )
         
         new_status = None
-
+        
         if lead_management_enabled:
         
             new_status = calcular_estado_lead(
@@ -515,7 +525,7 @@ def lambda_handler(event, context):
                 user_question=user_question,
                 ai_response=ai_response,
                 new_status=new_status,
-                prompt_config=prompt_config,
+                business_config=business_config,
                 BITRIX_WEBHOOK=BITRIX_WEBHOOK
             )
 
